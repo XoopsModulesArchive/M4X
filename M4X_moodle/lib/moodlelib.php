@@ -1,0 +1,4151 @@
+<?php
+
+declare(strict_types=1);
+
+// $Id: moodlelib.php,v 1.338.2.33 2004/10/17 23:42:48 stronk7 Exp $
+
+///////////////////////////////////////////////////////////////////////////
+//                                                                       //
+// moodlelib.php                                                         //
+//                                                                       //
+// Main library file of miscellaneous general-purpose Moodle functions   //
+//                                                                       //
+// Other main libraries:                                                 //
+//                                                                       //
+//   weblib.php      - functions that produce web output                 //
+//   datalib.php     - functions that access the database                //
+//                                                                       //
+///////////////////////////////////////////////////////////////////////////
+//                                                                       //
+// NOTICE OF COPYRIGHT                                                   //
+//                                                                       //
+// Moodle - Modular Object-Oriented Dynamic Learning Environment         //
+//          http://moodle.org                                            //
+//                                                                       //
+// Copyright (C) 1999-2004  Martin Dougiamas  http://dougiamas.com       //
+//                                                                       //
+// This program is free software; you can redistribute it and/or modify  //
+// it under the terms of the GNU General Public License as published by  //
+// the Free Software Foundation; either version 2 of the License, or     //
+// (at your option) any later version.                                   //
+//                                                                       //
+// This program is distributed in the hope that it will be useful,       //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of        //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         //
+// GNU General Public License for more details:                          //
+//                                                                       //
+//          http://www.gnu.org/copyleft/gpl.html                         //
+//                                                                       //
+///////////////////////////////////////////////////////////////////////////
+
+/// CONSTANTS /////////////////////////////////////////////////////////////
+
+use Xmf\Request;
+
+define('NOGROUPS', 0);
+define('SEPARATEGROUPS', 1);
+define('VISIBLEGROUPS', 2);
+
+define('PARAM_RAW', 0x00);
+define('PARAM_CLEAN', 0x01);
+define('PARAM_INT', 0x02);
+define('PARAM_INTEGER', 0x02);  // Alias for PARAM_INT
+define('PARAM_ALPHA', 0x04);
+define('PARAM_ACTION', 0x04);  // Alias for PARAM_ALPHA
+define('PARAM_FORMAT', 0x04);  // Alias for PARAM_ALPHA
+define('PARAM_NOTAGS', 0x08);
+define('PARAM_FILE', 0x10);
+define('PARAM_PATH', 0x20);
+
+/// PARAMETER HANDLING ////////////////////////////////////////////////////
+
+function required_param($varname, $options = PARAM_CLEAN)
+{
+    /// This function will replace require_variable over time
+
+    /// It returns a value for a given variable name.
+
+    if (isset($_POST[$varname])) {       // POST has precedence
+        $param = $_POST[$varname];
+    } elseif (isset($_GET[$varname])) {
+        $param = $_GET[$varname];
+    } else {
+        error('A required parameter (' . $varname . ') was missing');
+    }
+
+    return clean_param($param, $options);
+}
+
+function optional_param($varname, $default = null, $options = PARAM_CLEAN)
+{
+    /// This function will replace both of the above two functions over time.
+
+    /// It returns a value for a given variable name.
+
+    if (isset($_POST[$varname])) {       // POST has precedence
+        $param = $_POST[$varname];
+    } elseif (isset($_GET[$varname])) {
+        $param = $_GET[$varname];
+    } else {
+        return $default;
+    }
+
+    return clean_param($param, $options);
+}
+
+function clean_param($param, $options)
+{
+    /// Given a parameter and a bitfield of options, this function
+
+    /// will clean it up and give it the required type, etc.
+
+    if (!$options) {
+        return $param;                   // Return raw value
+    }
+
+    if ((string)$param == (string)(int)$param) {  // It's just an integer
+        return $param;
+    }
+
+    if ($options & PARAM_CLEAN) {
+        $param = clean_text($param);     // Sweep for scripts, etc
+    }
+
+    if ($options & PARAM_INT) {
+        $param = (int)$param;            // Convert to integer
+    }
+
+    if ($options & PARAM_ALPHA) {        // Remove everything not a-z
+        $param = eregi_replace('[^a-z]', '', $param);
+    }
+
+    if ($options & PARAM_NOTAGS) {       // Strip all tags completely
+        $param = strip_tags($param);
+    }
+
+    if ($options & PARAM_FILE) {         // Strip all suspicious characters from filename
+        $param = str_replace('\\', '/', $param);
+
+        $param = basename($param);
+
+        $param = preg_replace('\.\.+', '', $param);
+
+        $param = preg_replace('[[:cntrl:]]|[<>"\`\|\']', '', $param);
+
+        if ('.' === $param or ' ' === $param) {
+            $param = '';
+        }
+    }
+
+    if ($options & PARAM_PATH) {         // Strip all suspicious characters from file path
+        $param = str_replace('\\', '/', $param);
+
+        $param = preg_replace('\.\.+', '', $param);
+
+        $param = preg_replace('[[:cntrl:]]|[<>"\`\|\']', '', $param);
+    }
+
+    return $param;
+}
+
+function confirm_sesskey($sesskey = null)
+{
+    /// For security purposes, this function will check that the currently
+
+    /// given sesskey (passed as a parameter to the script or this function)
+
+    /// matches that of the current user.
+
+    global $USER;
+
+    if (empty($sesskey)) {
+        $sesskey = required_param('sesskey');  // Check script parameters
+    }
+
+    if (!isset($USER->sesskey)) {
+        return false;
+    }
+
+    return ($USER->sesskey == $sesskey);
+}
+
+function require_variable($var)
+{
+    /// Variable must be present
+
+    /// This old function is retained for backward compatibility
+
+    if (!isset($var)) {
+        error('A required parameter was missing');
+    }
+}
+
+function optional_variable(&$var, $default = 0)
+{
+    /// Variable may be present, if not then set a default
+
+    /// This old function is retained for backward compatibility
+
+    if (!isset($var)) {
+        $var = $default;
+    }
+}
+
+function set_config($name, $value)
+{
+    /// No need for get_config because they are usually always available in $CFG
+
+    global $CFG;
+
+    $CFG->$name = $value;  // So it's defined for this invocation at least
+
+    if (get_field('config', 'name', 'name', $name)) {
+        return set_field('config', 'value', $value, 'name', $name);
+    }
+
+    $config->name = $name;
+
+    $config->value = $value;
+
+    return insert_record('config', $config);
+}
+
+function reload_user_preferences()
+{
+    /// Refresh current USER with all their current preferences
+
+    global $USER;
+
+    unset($USER->preference);
+
+    if ($preferences = get_records('user_preferences', 'userid', $USER->id)) {
+        foreach ($preferences as $preference) {
+            $USER->preference[$preference->name] = $preference->value;
+        }
+    }
+}
+
+function set_user_preference($name, $value)
+{
+    /// Sets a preference for the current user
+
+    global $USER;
+
+    if (empty($name)) {
+        return false;
+    }
+
+    if ($preference = get_record('user_preferences', 'userid', $USER->id, 'name', $name)) {
+        if (set_field('user_preferences', 'value', $value, 'id', $preference->id)) {
+            $USER->preference[$name] = $value;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    $preference->userid = $USER->id;
+
+    $preference->name = $name;
+
+    $preference->value = (string)$value;
+
+    if (insert_record('user_preferences', $preference)) {
+        $USER->preference[$name] = $value;
+
+        return true;
+    }
+
+    return false;
+}
+
+function set_user_preferences($prefarray)
+{
+    /// Sets a whole array of preferences for the current user
+
+    if (!is_array($prefarray) or empty($prefarray)) {
+        return false;
+    }
+
+    $return = true;
+
+    foreach ($prefarray as $name => $value) {
+        // The order is important; if the test for return is done first,
+
+        // then if one function call fails all the remaining ones will
+
+        // be "optimized away"
+
+        $return = set_user_preference($name, $value) and $return;
+    }
+
+    return $return;
+}
+
+function get_user_preferences($name = null, $default = null)
+{
+    /// Without arguments, returns all the current user preferences
+
+    /// as an array.  If a name is specified, then this function
+
+    /// attempts to return that particular preference value.  If
+
+    /// none is found, then the optional value $default is returned,
+
+    /// otherwise NULL.
+
+    global $USER;
+
+    if (empty($USER->preference)) {
+        return $default;              // Default value (or NULL)
+    }
+
+    if (empty($name)) {
+        return $USER->preference;     // Whole array
+    }
+
+    return $USER->preference[$name] ?? $default;  // The single value
+}
+
+/// FUNCTIONS FOR HANDLING TIME ////////////////////////////////////////////
+
+function make_timestamp($year, $month = 1, $day = 1, $hour = 0, $minute = 0, $second = 0, $timezone = 99)
+{
+    /// Given date parts in user time, produce a GMT timestamp
+
+    $timezone = get_user_timezone($timezone);
+
+    if (abs($timezone) > 13) {
+        return mktime((int)$hour, (int)$minute, (int)$second, (int)$month, (int)$day, (int)$year);
+    }
+
+    $time = gmmktime((int)$hour, (int)$minute, (int)$second, (int)$month, (int)$day, (int)$year);
+
+    return usertime($time, $timezone);  // This is GMT
+}
+
+function format_time($totalsecs, $str = null)
+{
+    /// Given an amount of time in seconds, returns string
+
+    /// formatted nicely as months, days, hours etc as needed
+
+    $totalsecs = abs($totalsecs);
+
+    if (!$str) {  // Create the str structure the slow way
+        $str->day = get_string('day');
+
+        $str->days = get_string('days');
+
+        $str->hour = get_string('hour');
+
+        $str->hours = get_string('hours');
+
+        $str->min = get_string('min');
+
+        $str->mins = get_string('mins');
+
+        $str->sec = get_string('sec');
+
+        $str->secs = get_string('secs');
+    }
+
+    $days = floor($totalsecs / 86400);
+
+    $remainder = $totalsecs - ($days * 86400);
+
+    $hours = floor($remainder / 3600);
+
+    $remainder -= ($hours * 3600);
+
+    $mins = floor($remainder / 60);
+
+    $secs = $remainder - ($mins * 60);
+
+    $ss = (1 == $secs) ? $str->sec : $str->secs;
+
+    $sm = (1 == $mins) ? $str->min : $str->mins;
+
+    $sh = (1 == $hours) ? $str->hour : $str->hours;
+
+    $sd = (1 == $days) ? $str->day : $str->days;
+
+    $odays = '';
+
+    $ohours = '';
+
+    $omins = '';
+
+    $osecs = '';
+
+    if ($days) {
+        $odays = "$days $sd";
+    }
+
+    if ($hours) {
+        $ohours = "$hours $sh";
+    }
+
+    if ($mins) {
+        $omins = "$mins $sm";
+    }
+
+    if ($secs) {
+        $osecs = "$secs $ss";
+    }
+
+    if ($days) {
+        return "$odays $ohours";
+    }
+
+    if ($hours) {
+        return "$ohours $omins";
+    }
+
+    if ($mins) {
+        return "$omins $osecs";
+    }
+
+    if ($secs) {
+        return (string)$osecs;
+    }
+
+    return get_string('now');
+}
+
+function userdate($date, $format = '', $timezone = 99, $fixday = true)
+{
+    /// Returns a formatted string that represents a date in user time
+
+    /// WARNING: note that the format is for strftime(), not date().
+
+    /// Because of a bug in most Windows time libraries, we can't use
+
+    /// the nicer %e, so we have to use %d which has leading zeroes.
+
+    /// A lot of the fuss below is just getting rid of these leading
+
+    /// zeroes as efficiently as possible.
+
+    ///
+
+    /// If parammeter fixday = true (default), then take off leading
+
+    /// zero from %d, else mantain it.
+
+    if ('' == $format) {
+        $format = get_string('strftimedaydatetime');
+    }
+
+    $formatnoday = str_replace('%d', 'DD', $format);
+
+    if ($fixday) {
+        $fixday = ($formatnoday != $format);
+    }
+
+    $timezone = get_user_timezone($timezone);
+
+    if (abs($timezone) > 13) {
+        if ($fixday) {
+            $datestring = strftime($formatnoday, $date);
+
+            $daystring = str_replace(' 0', '', strftime(' %d', $date));
+
+            $datestring = str_replace('DD', $daystring, $datestring);
+        } else {
+            $datestring = strftime($format, $date);
+        }
+    } else {
+        $date += (int)($timezone * 3600);
+
+        if ($fixday) {
+            $datestring = gmstrftime($formatnoday, $date);
+
+            $daystring = str_replace(' 0', '', gmstrftime(' %d', $date));
+
+            $datestring = str_replace('DD', $daystring, $datestring);
+        } else {
+            $datestring = gmstrftime($format, $date);
+        }
+    }
+
+    return $datestring;
+}
+
+function usergetdate($date, $timezone = 99)
+{
+    /// Given a $date timestamp in GMT, returns an array
+
+    /// that represents the date in user time
+
+    $timezone = get_user_timezone($timezone);
+
+    if (abs($timezone) > 13) {
+        return getdate($date);
+    }
+
+    //There is no gmgetdate so I have to fake it...
+
+    $date += (int)($timezone * 3600);
+
+    $getdate['seconds'] = gmstrftime('%S', $date);
+
+    $getdate['minutes'] = gmstrftime('%M', $date);
+
+    $getdate['hours'] = gmstrftime('%H', $date);
+
+    $getdate['mday'] = gmstrftime('%d', $date);
+
+    $getdate['wday'] = gmstrftime('%u', $date);
+
+    $getdate['mon'] = gmstrftime('%m', $date);
+
+    $getdate['year'] = gmstrftime('%Y', $date);
+
+    $getdate['yday'] = gmstrftime('%j', $date);
+
+    $getdate['weekday'] = gmstrftime('%A', $date);
+
+    $getdate['month'] = gmstrftime('%B', $date);
+
+    return $getdate;
+}
+
+function usertime($date, $timezone = 99)
+{
+    /// Given a GMT timestamp (seconds since epoch), offsets it by
+
+    /// the timezone.  eg 3pm in India is 3pm GMT - 7 * 3600 seconds
+
+    $timezone = get_user_timezone($timezone);
+
+    if (abs($timezone) > 13) {
+        return $date;
+    }
+
+    return $date - (int)($timezone * 3600);
+}
+
+function usergetmidnight($date, $timezone = 99)
+{
+    /// Given a time, return the GMT timestamp of the most recent midnight
+
+    /// for the current user.
+
+    $timezone = get_user_timezone($timezone);
+
+    $userdate = usergetdate($date, $timezone);
+
+    if (abs($timezone) > 13) {
+        return mktime(0, 0, 0, $userdate['mon'], $userdate['mday'], $userdate['year']);
+    }
+
+    $timemidnight = gmmktime(0, 0, 0, $userdate['mon'], $userdate['mday'], $userdate['year']);
+
+    return usertime($timemidnight, $timezone); // Time of midnight of this user's day, in GMT
+}
+
+function usertimezone($timezone = 99)
+{
+    /// Returns a string that prints the user's timezone
+
+    $timezone = get_user_timezone($timezone);
+
+    if (abs($timezone) > 13) {
+        return 'server time';
+    }
+
+    if (abs($timezone) < 0.5) {
+        return 'GMT';
+    }
+
+    if ($timezone > 0) {
+        return "GMT+$timezone";
+    }
+
+    return "GMT$timezone";
+}
+
+function get_user_timezone($tz = 99)
+{
+    // Returns a float which represents the user's timezone difference from GMT in hours
+
+    // Checks various settings and picks the most dominant of those which have a value
+
+    // Variables declared explicitly global here so that if we add
+
+    // something later we won't forget to global it...
+
+    $timezones = [
+        $GLOBALS['USER']->timezone ?? 99,
+        $GLOBALS['CFG']->timezone ?? 99,
+    ];
+
+    while (99 == $tz && $next = each($timezones)) {
+        $tz = (float)$next['value'];
+    }
+
+    return $tz;
+}
+
+/// USER AUTHENTICATION AND LOGIN ////////////////////////////////////////
+
+function require_login($courseid = 0, $autologinguest = true)
+{
+    /// This function checks that the current user is logged in, and optionally
+
+    /// whether they are "logged in" or allowed to be in a particular course.
+
+    /// If not, then it redirects them to the site login or course enrolment.
+
+    /// $autologinguest determines whether visitors should automatically be
+
+    /// logged in as guests provide $CFG->autologinguests is set to 1
+
+    global $CFG, $SESSION, $USER, $FULLME, $MoodleSession;
+
+    // First check that the user is logged in to the site.
+    if (!(isset($USER->loggedin) and $USER->confirmed and ($USER->site == $CFG->wwwroot))) { // They're not
+        $SESSION->wantsurl = $FULLME;
+
+        if (!empty($_SERVER['HTTP_REFERER'])) {
+            $SESSION->fromurl = $_SERVER['HTTP_REFERER'];
+        }
+
+        $USER = null;
+
+        if ($autologinguest and $CFG->autologinguests and $courseid and get_field('course', 'guest', 'id', $courseid)) {
+            $loginguest = '?loginguest=true';
+        } else {
+            $loginguest = '';
+        }
+
+        if (empty($CFG->loginhttps)) {
+            redirect("$CFG->wwwroot/login/index.php$loginguest");
+        } else {
+            $wwwroot = str_replace('http', 'https', $CFG->wwwroot);
+
+            redirect("$wwwroot/login/index.php$loginguest");
+        }
+
+        die;
+    }
+
+    // Check that the user account is properly set up
+
+    if (user_not_fully_set_up($USER)) {
+        $site = get_site();
+
+        redirect("$CFG->wwwroot/user/edit.php?id=$USER->id&course=$site->id");
+
+        die;
+    }
+
+    // Make sure the USER has a sesskey set up.  Used for checking script parameters.
+
+    if (empty($USER->sesskey)) {
+        $USER->sesskey = random_string(10);
+    }
+
+    // Next, check if the user can be in a particular course
+
+    if ($courseid) {
+        if (SITEID == $courseid) {
+            return;   // Anyone can be in the site course
+        }
+
+        if (!empty($USER->student[$courseid]) or !empty($USER->teacher[$courseid]) or !empty($USER->admin)) {
+            if (isset($USER->realuser)) {   // Make sure the REAL person can also access this course
+                if (!isteacher($courseid, $USER->realuser)) {
+                    print_header();
+
+                    notice(get_string('studentnotallowed', '', fullname($USER, true)), "$CFG->wwwroot/");
+                }
+            } else {  // just update their last login time
+                update_user_in_db();
+            }
+
+            return;   // user is a member of this course.
+        }
+
+        if (!$course = get_record('course', 'id', $courseid)) {
+            error("That course doesn't exist");
+        }
+
+        if (!$course->visible) {
+            print_header();
+
+            notice(get_string('studentnotallowed', '', fullname($USER, true)), "$CFG->wwwroot/");
+        }
+
+        if ('guest' == $USER->username) {
+            switch ($course->guest) {
+                case 0: // Guests not allowed
+                    print_header();
+                    notice(get_string('guestsnotallowed', '', $course->fullname));
+                    break;
+                case 1: // Guests allowed
+                    update_user_in_db();
+
+                    return;
+                case 2: // Guests allowed with key (drop through)
+                    break;
+            }
+        }
+
+        // Currently not enrolled in the course, so see if they want to enrol
+
+        $SESSION->wantsurl = $FULLME;
+
+        redirect("$CFG->wwwroot/course/enrol.php?id=$courseid");
+
+        die;
+    }
+}
+
+function require_course_login($course, $autologinguest = true)
+{
+    // This is a weaker version of require_login which only requires login
+
+    // when called from within a course rather than the site page, unless
+
+    // the forcelogin option is turned on.
+
+    global $CFG;
+
+    if ($CFG->forcelogin) {
+        require_login();
+    }
+
+    if ($course->category) {
+        require_login($course->id, $autologinguest);
+    }
+}
+
+function update_user_login_times()
+{
+    global $USER;
+
+    $USER->lastlogin = $user->lastlogin = $USER->currentlogin;
+
+    $USER->currentlogin = $user->currentlogin = time();
+
+    $user->id = $USER->id;
+
+    return update_record('user', $user);
+}
+
+function user_not_fully_set_up($user)
+{
+    return ('guest' != $user->username and (empty($user->firstname) or empty($user->lastname) or empty($user->email)));
+}
+
+function update_login_count()
+{
+    /// Keeps track of login attempts
+
+    global $SESSION;
+
+    $max_logins = 10;
+
+    if (empty($SESSION->logincount)) {
+        $SESSION->logincount = 1;
+    } else {
+        $SESSION->logincount++;
+    }
+
+    if ($SESSION->logincount > $max_logins) {
+        unset($SESSION->wantsurl);
+
+        error(get_string('errortoomanylogins'));
+    }
+}
+
+function reset_login_count()
+{
+    /// Resets login attempts
+
+    global $SESSION;
+
+    $SESSION->logincount = 0;
+}
+
+function check_for_restricted_user($username = null, $redirect = '')
+{
+    global $CFG, $USER;
+
+    if (!$username) {
+        if (!empty($USER->username)) {
+            $username = $USER->username;
+        } else {
+            return false;
+        }
+    }
+
+    if (!empty($CFG->restrictusers)) {
+        $names = explode(',', $CFG->restrictusers);
+
+        if (in_array($username, $names, true)) {
+            error(get_string('restricteduser', 'error', fullname($USER)), $redirect);
+        }
+    }
+}
+
+function isadmin($userid = 0)
+{
+    /// Is the user an admin?
+
+    global $USER;
+
+    static $admins = [];
+
+    static $nonadmins = [];
+
+    if (!$userid) {
+        if (empty($USER->id)) {
+            return false;
+        }
+
+        $userid = $USER->id;
+    }
+
+    if (in_array($userid, $admins, true)) {
+        return true;
+    } elseif (in_array($userid, $nonadmins, true)) {
+        return false;
+    } elseif (record_exists('user_admins', 'userid', $userid)) {
+        $admins[] = $userid;
+
+        return true;
+    }
+
+    $nonadmins[] = $userid;
+
+    return false;
+}
+
+function isteacher($courseid = 0, $userid = 0, $includeadmin = true)
+{
+    /// Is the user a teacher or admin?
+
+    global $USER;
+
+    if ($includeadmin and isadmin($userid)) {  // admins can do anything the teacher can
+        return true;
+    }
+
+    if (!$userid) {
+        if ($courseid) {
+            return !empty($USER->teacher[$courseid]);
+        }
+
+        if (!isset($USER->id)) {
+            return false;
+        }
+
+        $userid = $USER->id;
+    }
+
+    if (!$courseid) {
+        return record_exists('user_teachers', 'userid', $userid);
+    }
+
+    return record_exists('user_teachers', 'userid', $userid, 'course', $courseid);
+}
+
+function isteacheredit($courseid, $userid = 0)
+{
+    /// Is the user allowed to edit this course?
+
+    global $USER;
+
+    if (isadmin($userid)) {  // admins can do anything
+        return true;
+    }
+
+    if (!$userid) {
+        return !empty($USER->teacheredit[$courseid]);
+    }
+
+    return get_field('user_teachers', 'editall', 'userid', $userid, 'course', $courseid);
+}
+
+function iscreator($userid = 0)
+{
+    /// Can user create new courses?
+
+    global $USER;
+
+    if (empty($USER->id)) {
+        return false;
+    }
+
+    if (isadmin($userid)) {  // admins can do anything
+        return true;
+    }
+
+    if (empty($userid)) {
+        return record_exists('user_coursecreators', 'userid', $USER->id);
+    }
+
+    return record_exists('user_coursecreators', 'userid', $userid);
+}
+
+function isstudent($courseid, $userid = 0)
+{
+    /// Is the user a student in this course?
+
+    /// If course is site, is the user a confirmed user on the site?
+
+    global $USER, $CFG;
+
+    if (empty($USER->id) and !$userid) {
+        return false;
+    }
+
+    if (SITEID == $courseid) {
+        if (!$userid) {
+            $userid = $USER->id;
+        }
+
+        if (isguest($userid)) {
+            return false;
+        }
+
+        // a site teacher can never be a site student
+
+        if (isteacher($courseid, $userid)) {
+            return false;
+        }
+
+        if ($CFG->allusersaresitestudents) {
+            return record_exists('user', 'id', $userid);
+        }
+
+        return (record_exists('user_students', 'userid', $userid) or record_exists('user_teachers', 'userid', $userid));
+    }
+
+    if (!$userid) {
+        return !empty($USER->student[$courseid]);
+    }
+
+    //  $timenow = time();   // todo:  add time check below
+
+    return record_exists('user_students', 'userid', $userid, 'course', $courseid);
+}
+
+function isguest($userid = 0)
+{
+    /// Is the user a guest?
+
+    global $USER;
+
+    if (!$userid) {
+        if (empty($USER->username)) {
+            return false;
+        }
+
+        return ('guest' == $USER->username);
+    }
+
+    return record_exists('user', 'id', $userid, 'username', 'guest');
+}
+
+function isediting($courseid, $user = null)
+{
+    /// Is the current user in editing mode?
+
+    global $USER;
+
+    if (!$user) {
+        $user = $USER;
+    }
+
+    if (empty($user->editing)) {
+        return false;
+    }
+
+    return ($user->editing and isteacher($courseid, $user->id));
+}
+
+function ismoving($courseid)
+{
+    /// Is the current user currently moving an activity?
+
+    global $USER;
+
+    if (!empty($USER->activitycopy)) {
+        return ($USER->activitycopycourse == $courseid);
+    }
+
+    return false;
+}
+
+function fullname($user, $override = false)
+{
+    /// Given an object containing firstname and lastname
+
+    /// values, this function returns a string with the
+
+    /// full name of the person.
+
+    /// The result may depend on system settings
+
+    /// or language.  'override' will force both names
+
+    /// to be used even if system settings specify one.
+
+    global $CFG, $SESSION;
+
+    if (!isset($user->firstname) and !isset($user->lastname)) {
+        return '';
+    }
+
+    if (!empty($SESSION->fullnamedisplay)) {
+        $CFG->fullnamedisplay = $SESSION->fullnamedisplay;
+    }
+
+    if ('firstname lastname' == $CFG->fullnamedisplay) {
+        return "$user->firstname $user->lastname";
+    } elseif ('lastname firstname' == $CFG->fullnamedisplay) {
+        return "$user->lastname $user->firstname";
+    } elseif ('firstname' == $CFG->fullnamedisplay) {
+        if ($override) {
+            return get_string('fullnamedisplay', '', $user);
+        }
+
+        return $user->firstname;
+    }
+
+    return get_string('fullnamedisplay', '', $user);
+}
+
+function set_moodle_cookie($thing)
+{
+    /// Sets a moodle cookie with an encrypted string
+
+    global $CFG;
+
+    $cookiename = 'MOODLEID_' . $CFG->sessioncookie;
+
+    $days = 60;
+
+    $seconds = 60 * 60 * 24 * $days;
+
+    setcookie($cookiename, '', time() - 3600, '/');
+
+    setcookie($cookiename, rc4encrypt($thing), time() + $seconds, '/');
+}
+
+function get_moodle_cookie()
+{
+    /// Gets a moodle cookie with an encrypted string
+
+    global $CFG;
+
+    $cookiename = 'MOODLEID_' . $CFG->sessioncookie;
+
+    if (empty($_COOKIE[$cookiename])) {
+        return '';
+    }
+
+    return rc4decrypt($_COOKIE[$cookiename]);
+}
+
+function is_internal_auth($auth = '')
+{
+    /// Returns true if an internal authentication method is being used.
+
+    /// if method not specified then, global default is assumed
+
+    global $CFG;
+
+    $method = $CFG->auth;
+
+    if (!empty($auth)) {
+        $method = $auth;
+    }
+
+    return ('email' == $method || 'none' == $method || 'manual' == $method);
+}
+
+function create_user_record($username, $password, $auth = '')
+{
+    /// Creates a bare-bones user record
+
+    global $REMOTE_ADDR, $CFG;
+
+    //just in case check text case
+
+    $username = trim(moodle_strtolower($username));
+
+    if (function_exists('auth_get_userinfo')) {
+        if ($newinfo = auth_get_userinfo($username)) {
+            foreach ($newinfo as $key => $value) {
+                $newuser->$key = addslashes(stripslashes($value)); // Just in case
+            }
+        }
+    }
+
+    if (!empty($newuser->email)) {
+        if (email_is_not_allowed($newuser->email)) {
+            unset($newuser->email);
+        }
+    }
+
+    $newuser->auth = (empty($auth)) ? $CFG->auth : $auth;
+
+    $newuser->username = $username;
+
+    $newuser->password = md5($password);
+
+    $newuser->lang = $CFG->lang;
+
+    $newuser->confirmed = 1;
+
+    $newuser->lastIP = $REMOTE_ADDR;
+
+    $newuser->timemodified = time();
+
+    if (insert_record('user', $newuser)) {
+        return get_user_info_from_db('username', $username);
+    }
+
+    return false;
+}
+
+function guest_user()
+{
+    global $CFG;
+
+    if ($newuser = get_record('user', 'username', 'guest')) {
+        $newuser->loggedin = true;
+
+        $newuser->confirmed = 1;
+
+        $newuser->site = $CFG->wwwroot;
+
+        $newuser->lang = $CFG->lang;
+    }
+
+    return $newuser;
+}
+
+//--------------------------------------------
+// MOODLE4XOOPS - J. BAUDIN
+//--------------------------------------------
+function authenticate_user_login($username, $password, $MDL_xoopsUser)
+{
+    /// Given a username and password, this function looks them
+
+    /// up using the currently selected authentication mechanism,
+
+    /// and if the authentication is successful, it returns a
+
+    /// valid $user object from the 'user' table.
+
+    ///
+
+    /// Uses auth_ functions from the currently active auth module
+
+    global $CFG;
+
+    //--------------------------------------------
+
+    // MOODLE4XOOPS - J. BAUDIN
+
+    //--------------------------------------------
+
+    if ('' == $MDL_xoopsUser) {
+        $md5password = md5($password);
+    } else {
+        $md5password = $password;
+    }
+
+    //--------------------------------------------
+
+    // First try to find the user in the database
+
+    $user = get_user_info_from_db('username', $username);
+
+    // Sort out the authentication method we are using.
+
+    if (empty($CFG->auth)) {
+        $CFG->auth = 'manual';     // Default authentication module
+    }
+
+    if (empty($user->auth)) {      // For some reason it isn't set yet
+        if (isadmin($user->id) or isguest($user->id)) {
+            $auth = 'manual';    // Always assume these guys are internal
+        } else {
+            $auth = $CFG->auth;  // Normal users default to site method
+        }
+    } else {
+        $auth = $user->auth;
+    }
+
+    if (detect_munged_arguments($auth, 0)) {   // For safety on the next require
+        return false;
+    }
+
+    if (!file_exists("$CFG->dirroot/auth/$auth/lib.php")) {
+        $auth = 'manual';    // Can't find auth module, default to internal
+    }
+
+    require_once "$CFG->dirroot/auth/$auth/lib.php";
+
+    //--------------------------------------------
+    // MOODLE4XOOPS - J. BAUDIN
+    //--------------------------------------------
+    if (auth_user_login($username, $password, $MDL_xoopsUser)) {  // Successful authentication
+        if ($user) {                              // User already exists in database
+            if (empty($user->auth)) {             // For some reason auth isn't set yet
+                set_field('user', 'auth', $auth, 'username', $username);
+            }
+
+            if ($md5password != $user->password) {   // Update local copy of password for reference
+                set_field('user', 'password', $md5password, 'username', $username);
+            }
+        } else {
+            $user = create_user_record($username, $password, $auth);
+        }
+
+        if (function_exists('auth_iscreator')) {    // Check if the user is a creator
+            $useriscreator = auth_iscreator($username);
+
+            if (null !== $useriscreator) {
+                if ($useriscreator) {
+                    if (!record_exists('user_coursecreators', 'userid', $user->id)) {
+                        $cdata->userid = $user->id;
+
+                        if (!insert_record('user_coursecreators', $cdata)) {
+                            error('Cannot add user to course creators.');
+                        }
+                    }
+                } else {
+                    if (record_exists('user_coursecreators', 'userid', $user->id)) {
+                        if (!delete_records('user_coursecreators', 'userid', $user->id)) {
+                            error('Cannot remove user from course creators.');
+                        }
+                    }
+                }
+            }
+        }
+
+        return $user;
+    }
+
+    add_to_log(0, 'login', 'error', Request::getString('HTTP_REFERER', '', 'SERVER'), $username);
+
+    error_log('[client ' . $_SERVER['REMOTE_ADDR'] . "]\t$CFG->wwwroot\tFailed Login:\t$username\t" . $_SERVER['HTTP_USER_AGENT']);
+
+    return false;
+}
+
+function enrol_student($userid, $courseid, $timestart = 0, $timeend = 0)
+{
+    /// Enrols (or re-enrols) a student in a given course
+
+    if (!$course = get_record('course', 'id', $courseid)) {  // Check course
+        return false;
+    }
+
+    if (!$user = get_record('user', 'id', $userid)) {        // Check user
+        return false;
+    }
+
+    if ($student = get_record('user_students', 'userid', $userid, 'course', $courseid)) {
+        $student->timestart = $timestart;
+
+        $student->timeend = $timeend;
+
+        $student->time = time();
+
+        return update_record('user_students', $student);
+    }
+
+    $student->userid = $userid;
+
+    $student->course = $courseid;
+
+    $student->timestart = $timestart;
+
+    $student->timeend = $timeend;
+
+    $student->time = time();
+
+    return insert_record('user_students', $student);
+}
+
+function unenrol_student($userid, $courseid = 0)
+{
+    /// Unenrols a student from a given course
+
+    if ($courseid) {
+        /// First delete any crucial stuff that might still send mail
+
+        if ($forums = get_records('forum', 'course', $courseid)) {
+            foreach ($forums as $forum) {
+                delete_records('forum_subscriptions', 'forum', $forum->id, 'userid', $userid);
+            }
+        }
+
+        if ($groups = get_groups($courseid, $userid)) {
+            foreach ($groups as $group) {
+                delete_records('groups_members', 'groupid', $group->id, 'userid', $userid);
+            }
+        }
+
+        return delete_records('user_students', 'userid', $userid, 'course', $courseid);
+    }
+
+    delete_records('forum_subscriptions', 'userid', $userid);
+
+    delete_records('groups_members', 'userid', $userid);
+
+    return delete_records('user_students', 'userid', $userid);
+}
+
+function add_teacher($userid, $courseid, $editall = 1, $role = '', $timestart = 0, $timeend = 0)
+{
+    /// Add a teacher to a given course
+
+    if ($teacher = get_record('user_teachers', 'userid', $userid, 'course', $courseid)) {
+        $newteacher = null;
+
+        $newteacher->id = $teacher->id;
+
+        $newteacher->editall = $editall;
+
+        if ($role) {
+            $newteacher->role = $role;
+        }
+
+        if ($timestart) {
+            $newteacher->timestart = $timestart;
+        }
+
+        if ($timeend) {
+            $newteacher->timeend = $timeend;
+        }
+
+        return update_record('user_teachers', $newteacher);
+    }
+
+    if (!record_exists('user', 'id', $userid)) {
+        return false;   // no such user
+    }
+
+    if (!record_exists('course', 'id', $courseid)) {
+        return false;   // no such course
+    }
+
+    $teacher = null;
+
+    $teacher->userid = $userid;
+
+    $teacher->course = $courseid;
+
+    $teacher->editall = $editall;
+
+    $teacher->role = $role;
+
+    if (record_exists('user_teachers', 'course', $courseid)) {
+        $teacher->authority = 2;
+    } else {
+        $teacher->authority = 1;
+    }
+
+    delete_records('user_students', 'userid', $userid, 'course', $courseid); // Unenrol as student
+
+    return insert_record('user_teachers', $teacher);
+}
+
+function remove_teacher($userid, $courseid = 0)
+{
+    /// Removes a teacher from a given course (or ALL courses)
+
+    /// Does not delete the user account
+
+    if ($courseid) {
+        /// First delete any crucial stuff that might still send mail
+
+        if ($forums = get_records('forum', 'course', $courseid)) {
+            foreach ($forums as $forum) {
+                delete_records('forum_subscriptions', 'forum', $forum->id, 'userid', $userid);
+            }
+        }
+
+        /// Next if the teacher is not registered as a student, but is
+
+        /// a member of a group, remove them from the group.
+
+        if (!isstudent($courseid, $userid)) {
+            if ($groups = get_groups($courseid, $userid)) {
+                foreach ($groups as $group) {
+                    delete_records('groups_members', 'groupid', $group->id, 'userid', $userid);
+                }
+            }
+        }
+
+        return delete_records('user_teachers', 'userid', $userid, 'course', $courseid);
+    }
+
+    delete_records('forum_subscriptions', 'userid', $userid);
+
+    return delete_records('user_teachers', 'userid', $userid);
+}
+
+function add_creator($userid)
+{
+    /// Add a creator to the site
+
+    if (!record_exists('user_admins', 'userid', $userid)) {
+        if (record_exists('user', 'id', $userid)) {
+            $creator->userid = $userid;
+
+            return insert_record('user_coursecreators', $creator);
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+function remove_creator($userid)
+{
+    /// Removes a creator from a site
+
+    global $db;
+
+    return delete_records('user_coursecreators', 'userid', $userid);
+}
+
+function add_admin($userid)
+{
+    /// Add an admin to the site
+
+    if (!record_exists('user_admins', 'userid', $userid)) {
+        if (record_exists('user', 'id', $userid)) {
+            $admin->userid = $userid;
+
+            // any admin is also a teacher on the site course
+
+            $site = get_site();
+
+            if (!record_exists('user_teachers', 'course', $site->id, 'userid', $userid)) {
+                if (!add_teacher($userid, $site->id)) {
+                    return false;
+                }
+            }
+
+            return insert_record('user_admins', $admin);
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+function remove_admin($userid)
+{
+    /// Removes an admin from a site
+
+    global $db;
+
+    // remove also from the list of site teachers
+
+    $site = get_site();
+
+    remove_teacher($userid, $site->id);
+
+    return delete_records('user_admins', 'userid', $userid);
+}
+
+function remove_course_contents($courseid, $showfeedback = true)
+{
+    /// Clear a course out completely, deleting all content
+
+    /// but don't delete the course itself
+
+    global $CFG, $THEME, $USER, $SESSION;
+
+    $result = true;
+
+    if (!$course = get_record('course', 'id', $courseid)) {
+        error("Course ID was incorrect (can't find it)");
+    }
+
+    $strdeleted = get_string('deleted');
+
+    // First delete every instance of every module
+
+    if ($allmods = get_records('modules')) {
+        foreach ($allmods as $mod) {
+            $modname = $mod->name;
+
+            $modfile = "$CFG->dirroot/mod/$modname/lib.php";
+
+            $moddelete = $modname . '_delete_instance';       // Delete everything connected to an instance
+            $moddeletecourse = $modname . '_delete_course';   // Delete other stray stuff (uncommon)
+            $count = 0;
+
+            if (file_exists($modfile)) {
+                require_once $modfile;
+
+                if (function_exists($moddelete)) {
+                    if ($instances = get_records($modname, 'course', $course->id)) {
+                        foreach ($instances as $instance) {
+                            if ($moddelete($instance->id)) {
+                                $count++;
+                            } else {
+                                notify("Could not delete $modname instance $instance->id ($instance->name)");
+
+                                $result = false;
+                            }
+                        }
+                    }
+                } else {
+                    notify("Function $moddelete() doesn't exist!");
+
+                    $result = false;
+                }
+
+                if (function_exists($moddeletecourse)) {
+                    $moddeletecourse($course);
+                }
+            }
+
+            if ($showfeedback) {
+                notify("$strdeleted $count x $modname");
+            }
+        }
+    } else {
+        error('No modules are installed!');
+    }
+
+    // Delete any user stuff
+
+    if (delete_records('user_students', 'course', $course->id)) {
+        if ($showfeedback) {
+            notify("$strdeleted user_students");
+        }
+    } else {
+        $result = false;
+    }
+
+    if (delete_records('user_teachers', 'course', $course->id)) {
+        if ($showfeedback) {
+            notify("$strdeleted user_teachers");
+        }
+    } else {
+        $result = false;
+    }
+
+    // Delete any groups
+
+    if ($groups = get_records('groups', 'courseid', $course->id)) {
+        foreach ($groups as $group) {
+            if (delete_records('groups_members', 'groupid', $group->id)) {
+                if ($showfeedback) {
+                    notify("$strdeleted groups_members");
+                }
+            } else {
+                $result = false;
+            }
+
+            if (delete_records('groups', 'id', $group->id)) {
+                if ($showfeedback) {
+                    notify("$strdeleted groups");
+                }
+            } else {
+                $result = false;
+            }
+        }
+    }
+
+    // Delete events
+
+    if (delete_records('event', 'courseid', $course->id)) {
+        if ($showfeedback) {
+            notify("$strdeleted event");
+        }
+    } else {
+        $result = false;
+    }
+
+    // Delete logs
+
+    if (delete_records('log', 'course', $course->id)) {
+        if ($showfeedback) {
+            notify("$strdeleted log");
+        }
+    } else {
+        $result = false;
+    }
+
+    // Delete any course stuff
+
+    if (delete_records('course_sections', 'course', $course->id)) {
+        if ($showfeedback) {
+            notify("$strdeleted course_sections");
+        }
+    } else {
+        $result = false;
+    }
+
+    if (delete_records('course_modules', 'course', $course->id)) {
+        if ($showfeedback) {
+            notify("$strdeleted course_modules");
+        }
+    } else {
+        $result = false;
+    }
+
+    return $result;
+}
+
+function remove_course_userdata(
+    $courseid,
+    $showfeedback = true,
+    $removestudents = true,
+    $removeteachers = false,
+    $removegroups = true,
+    $removeevents = true,
+    $removelogs = false
+) {
+    /// This function will empty a course of USER data as much as
+
+    /// possible.   It will retain the activities and the structure
+
+    /// of the course.
+
+    global $CFG, $THEME, $USER, $SESSION;
+
+    $result = true;
+
+    if (!$course = get_record('course', 'id', $courseid)) {
+        error("Course ID was incorrect (can't find it)");
+    }
+
+    $strdeleted = get_string('deleted');
+
+    // Look in every instance of every module for data to delete
+
+    if ($allmods = get_records('modules')) {
+        foreach ($allmods as $mod) {
+            $modname = $mod->name;
+
+            $modfile = "$CFG->dirroot/mod/$modname/lib.php";
+
+            $moddeleteuserdata = $modname . '_delete_userdata';   // Function to delete user data
+
+            $count = 0;
+
+            if (file_exists($modfile)) {
+                @require_once $modfile;
+
+                if (function_exists($moddeleteuserdata)) {
+                    $moddeleteuserdata($course, $showfeedback);
+                }
+            }
+        }
+    } else {
+        error('No modules are installed!');
+    }
+
+    // Delete other stuff
+
+    if ($removestudents) {
+        /// Delete student enrolments
+
+        if (delete_records('user_students', 'course', $course->id)) {
+            if ($showfeedback) {
+                notify("$strdeleted user_students");
+            }
+        } else {
+            $result = false;
+        }
+
+        /// Delete group members (but keep the groups)
+
+        if ($groups = get_records('groups', 'courseid', $course->id)) {
+            foreach ($groups as $group) {
+                if (delete_records('groups_members', 'groupid', $group->id)) {
+                    if ($showfeedback) {
+                        notify("$strdeleted groups_members");
+                    }
+                } else {
+                    $result = false;
+                }
+            }
+        }
+    }
+
+    if ($removeteachers) {
+        if (delete_records('user_teachers', 'course', $course->id)) {
+            if ($showfeedback) {
+                notify("$strdeleted user_teachers");
+            }
+        } else {
+            $result = false;
+        }
+    }
+
+    if ($removegroups) {
+        if ($groups = get_records('groups', 'courseid', $course->id)) {
+            foreach ($groups as $group) {
+                if (delete_records('groups', 'id', $group->id)) {
+                    if ($showfeedback) {
+                        notify("$strdeleted groups");
+                    }
+                } else {
+                    $result = false;
+                }
+            }
+        }
+    }
+
+    if ($removeevents) {
+        if (delete_records('event', 'courseid', $course->id)) {
+            if ($showfeedback) {
+                notify("$strdeleted event");
+            }
+        } else {
+            $result = false;
+        }
+    }
+
+    if ($removelogs) {
+        if (delete_records('log', 'course', $course->id)) {
+            if ($showfeedback) {
+                notify("$strdeleted log");
+            }
+        } else {
+            $result = false;
+        }
+    }
+
+    return $result;
+}
+
+/// GROUPS /////////////////////////////////////////////////////////
+
+/**
+ * Returns a boolean: is the user a member of the given group?
+ *
+ * @param mixed $groupid
+ * @param mixed $userid
+ * @return bool
+ */
+function ismember($groupid, $userid = 0)
+{
+    global $USER;
+
+    if (!$groupid) {   // No point doing further checks
+        return false;
+    }
+
+    if (!$userid) {
+        if (empty($USER->groupmember)) {
+            return false;
+        }
+
+        foreach ($USER->groupmember as $courseid => $mgroupid) {
+            if ($mgroupid == $groupid) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    return record_exists('groups_members', 'groupid', $groupid, 'userid', $userid);
+}
+
+/**
+ * Returns the group ID of the current user in the given course
+ *
+ * @param mixed $courseid
+ * @return int|mixed
+ */
+function mygroupid($courseid)
+{
+    global $USER;
+
+    if (empty($USER->groupmember[$courseid])) {
+        return 0;
+    }
+
+    return $USER->groupmember[$courseid];
+}
+
+/**
+ * For a given course, and possibly course module, determine
+ * what the current default groupmode is:
+ * NOGROUPS, SEPARATEGROUPS or VISIBLEGROUPS
+ *
+ * @param mixed      $course
+ * @param null|mixed $cm
+ * @return mixed
+ */
+function groupmode($course, $cm = null)
+{
+    if ($cm and !$course->groupmodeforce) {
+        return $cm->groupmode;
+    }
+
+    return $course->groupmode;
+}
+
+/**
+ * Sets the current group in the session variable
+ *
+ * @param mixed $courseid
+ * @param mixed $groupid
+ * @return mixed
+ */
+function set_current_group($courseid, $groupid)
+{
+    global $SESSION;
+
+    return $SESSION->currentgroup[$courseid] = $groupid;
+}
+
+/**
+ * Gets the current group for the current user as an id or an object
+ *
+ * @param mixed $courseid
+ * @param mixed $full
+ * @return int|mixed
+ */
+function get_current_group($courseid, $full = false)
+{
+    global $SESSION, $USER;
+
+    if (!isset($SESSION->currentgroup[$courseid])) {
+        if (empty($USER->groupmember[$courseid])) {
+            return 0;
+        }
+
+        $SESSION->currentgroup[$courseid] = $USER->groupmember[$courseid];
+    }
+
+    if ($full) {
+        return get_record('groups', 'id', $SESSION->currentgroup[$courseid]);
+    }
+
+    return $SESSION->currentgroup[$courseid];
+}
+
+/**
+ * A combination function to make it easier for modules
+ * to set up groups.
+ *
+ * It will use a given "groupid" parameter and try to use
+ * that to reset the current group for the user.
+ *
+ * @param mixed $course
+ * @param mixed $groupmode
+ * @param mixed $groupid
+ * @return false|int|mixed
+ */
+function get_and_set_current_group($course, $groupmode, $groupid = -1)
+{
+    if (!$groupmode) {   // Groups don't even apply
+        return false;
+    }
+
+    $currentgroupid = get_current_group($course->id);
+
+    if ($groupid < 0) {  // No change was specified
+        return $currentgroupid;
+    }
+
+    if ($groupid) {      // Try to change the current group to this groupid
+        if ($group = get_record('groups', 'id', $groupid, 'courseid', $course->id)) { // Exists
+            if (isteacheredit($course->id)) {          // Sets current default group
+                $currentgroupid = set_current_group($course->id, $group->id);
+            } elseif (VISIBLEGROUPS == $groupmode) {  // All groups are visible
+                $currentgroupid = $group->id;
+            }
+        }
+    } else {             // When groupid = 0 it means show ALL groups
+        if (isteacheredit($course->id)) {          // Sets current default group
+            $currentgroupid = set_current_group($course->id, 0);
+        } elseif (VISIBLEGROUPS == $groupmode) {  // All groups are visible
+            $currentgroupid = 0;
+        }
+    }
+
+    return $currentgroupid;
+}
+
+/**
+ * A big combination function to make it easier for modules
+ * to set up groups.
+ *
+ * Terminates if the current user shouldn't be looking at this group
+ * Otherwise returns the current group if there is one
+ * Otherwise returns false if groups aren't relevant
+ *
+ * @param mixed $course
+ * @param mixed $groupmode
+ * @param mixed $urlroot
+ * @return false|int|mixed
+ */
+function setup_and_print_groups($course, $groupmode, $urlroot)
+{
+    $changegroup = $_GET['group'] ?? -1;
+
+    $currentgroup = get_and_set_current_group($course, $groupmode, $changegroup);
+
+    if (false === $currentgroup) {
+        return false;
+    }
+
+    if (SEPARATEGROUPS == $groupmode and !isteacheredit($course->id) and !$currentgroup) {
+        print_heading(get_string('notingroup'));
+
+        print_footer($course);
+
+        //--------------------------------------------
+
+        // MOODLE4XOOPS - J. BAUDIN
+
+        //--------------------------------------------
+
+        require_once "$CFG->dirroot/footer.php";
+
+        //--------------------------------------------
+
+        exit;
+    }
+
+    if (VISIBLEGROUPS == $groupmode or ($groupmode and isteacheredit($course->id))) {
+        if ($groups = get_records_menu('groups', 'courseid', $course->id, 'name ASC', 'id,name')) {
+            echo '<div align="center">';
+
+            print_group_menu($groups, $groupmode, $currentgroup, $urlroot);
+
+            echo '</div>';
+        }
+    }
+
+    return $currentgroup;
+}
+
+/// CORRESPONDENCE  ////////////////////////////////////////////////
+
+function email_to_user($user, $from, $subject, $messagetext, $messagehtml = '', $attachment = '', $attachname = '', $usetrueaddress = true)
+{
+    ///  user        - a user record as an object
+
+    ///  from        - a user record as an object
+
+    ///  subject     - plain text subject line of the email
+
+    ///  messagetext - plain text version of the message
+
+    ///  messagehtml - complete html version of the message (optional)
+
+    ///  attachment  - a file on the filesystem, relative to $CFG->dataroot
+
+    ///  attachname  - the name of the file (extension indicates MIME)
+
+    ///  usetrueaddress - determines whether $from email address should be sent out.
+
+    ///                   Will be overruled by user profile setting for maildisplay
+
+    ///
+
+    ///  Returns "true" if mail was sent OK, "emailstop" if email was blocked by user
+
+    ///  and "false" if there was another sort of error.
+
+    global $CFG, $_SERVER;
+
+    global $course;                // This is a bit of an ugly hack to be gotten rid of later
+    if (!empty($course->lang)) {   // Course language is defined
+        $CFG->courselang = $course->lang;
+    }
+
+    require_once "$CFG->libdir/phpmailer/class.phpmailer.php";
+
+    if (empty($user)) {
+        return false;
+    }
+
+    if (!empty($user->emailstop)) {
+        return 'emailstop';
+    }
+
+    $mail = new PHPMailer();
+
+    $mail->Version = "Moodle $CFG->version";           // mailer version
+    $mail->PluginDir = "$CFG->libdir/phpmailer/";      // plugin directory (eg smtp plugin)
+
+    if ('en' != current_language()) {
+        $mail->CharSet = get_string('thischarset');
+    }
+
+    if ('qmail' == $CFG->smtphosts) {
+        $mail->IsQmail();                              // use Qmail system
+    } elseif (empty($CFG->smtphosts)) {
+        $mail->IsMail();                               // use PHP mail() = sendmail
+    } else {
+        $mail->IsSMTP();                               // use SMTP directly
+
+        if ($CFG->debug > 7) {
+            echo "<pre>\n";
+
+            $mail->SMTPDebug = true;
+        }
+
+        $mail->Host = (string)$CFG->smtphosts;               // specify main and backup servers
+
+        if ($CFG->smtpuser) {                          // Use SMTP authentication
+            $mail->SMTPAuth = true;
+
+            $mail->Username = $CFG->smtpuser;
+
+            $mail->Password = $CFG->smtppass;
+        }
+    }
+
+    $adminuser = get_admin();
+
+    $mail->Sender = (string)$adminuser->email;
+
+    if (is_string($from)) { // So we can pass whatever we want if there is need
+        $mail->From = $CFG->noreplyaddress;
+
+        $mail->FromName = $from;
+    } elseif ($usetrueaddress and $from->maildisplay) {
+        $mail->From = (string)$from->email;
+
+        $mail->FromName = fullname($from);
+    } else {
+        $mail->From = (string)$CFG->noreplyaddress;
+
+        $mail->FromName = fullname($from);
+    }
+
+    $mail->Subject = stripslashes($subject);
+
+    $mail->AddAddress((string)$user->email, fullname($user));
+
+    $mail->WordWrap = 79;                               // set word wrap
+
+    if (!empty($from->customheaders)) {                 // Add custom headers
+        if (is_array($from->customheaders)) {
+            foreach ($from->customheaders as $customheader) {
+                $mail->AddCustomHeader($customheader);
+            }
+        } else {
+            $mail->AddCustomHeader($from->customheaders);
+        }
+    }
+
+    if ($messagehtml) {
+        $mail->IsHTML(true);
+
+        $mail->Encoding = 'quoted-printable';           // Encoding to use
+
+        $mail->Body = $messagehtml;
+
+        $mail->AltBody = "\n$messagetext\n";
+    } else {
+        $mail->IsHTML(false);
+
+        $mail->Body = "\n$messagetext\n";
+    }
+
+    if ($attachment && $attachname) {
+        if (preg_match('\\.\\.', $attachment)) {    // Security check for ".." in dir path
+            $mail->AddAddress((string)$adminuser->email, fullname($adminuser));
+
+            $mail->AddStringAttachment('Error in attachment.  User attempted to attach a filename with a unsafe name.', 'error.txt', '8bit', 'text/plain');
+        } else {
+            require_once "$CFG->dirroot/files/mimetypes.php";
+
+            $mimetype = mimeinfo('type', $attachname);
+
+            $mail->AddAttachment("$CFG->dataroot/$attachment", (string)$attachname, 'base64', (string)$mimetype);
+        }
+    }
+
+    if ($mail->Send()) {
+        return true;
+    }
+
+    mtrace("ERROR: $mail->ErrorInfo");
+
+    $site = get_site();
+
+    add_to_log($site->id, 'library', 'mailer', $_SERVER['REQUEST_URI'], "ERROR: $mail->ErrorInfo");
+
+    return false;
+}
+
+function reset_password_and_mail($user)
+{
+    global $CFG;
+
+    $site = get_site();
+
+    $from = get_admin();
+
+    $newpassword = generate_password();
+
+    if (!set_field('user', 'password', md5($newpassword), 'id', $user->id)) {
+        error('Could not set user password!');
+    }
+
+    $a->firstname = $user->firstname;
+
+    $a->sitename = $site->fullname;
+
+    $a->username = $user->username;
+
+    $a->newpassword = $newpassword;
+
+    $a->link = "$CFG->wwwroot/login/change_password.php";
+
+    $a->signoff = fullname($from, true) . " ($from->email)";
+
+    $message = get_string('newpasswordtext', '', $a);
+
+    $subject = "$site->fullname: " . get_string('changedpassword');
+
+    return email_to_user($user, $from, $subject, $message);
+}
+
+function send_confirmation_email($user)
+{
+    global $CFG;
+
+    $site = get_site();
+
+    $from = get_admin();
+
+    $data->firstname = $user->firstname;
+
+    $data->sitename = $site->fullname;
+
+    $data->link = "$CFG->wwwroot/login/confirm.php?p=$user->secret&s=$user->username";
+
+    $data->admin = fullname($from) . " ($from->email)";
+
+    $message = get_string('emailconfirmation', '', $data);
+
+    $subject = get_string('emailconfirmationsubject', '', $site->fullname);
+
+    $messagehtml = text_to_html($message, false, false, true);
+
+    return email_to_user($user, $from, $subject, $message, $messagehtml);
+}
+
+function send_password_change_confirmation_email($user)
+{
+    global $CFG;
+
+    $site = get_site();
+
+    $from = get_admin();
+
+    $data->firstname = $user->firstname;
+
+    $data->sitename = $site->fullname;
+
+    $data->link = "$CFG->wwwroot/login/forgot_password.php?p=$user->secret&s=$user->username";
+
+    $data->admin = fullname($from) . " ($from->email)";
+
+    $message = get_string('emailpasswordconfirmation', '', $data);
+
+    $subject = get_string('emailpasswordconfirmationsubject', '', $site->fullname);
+
+    return email_to_user($user, $from, $subject, $message);
+}
+
+function email_is_not_allowed($email)
+{
+    /// Check that an email is allowed.  It returns an error message if there
+
+    /// was a problem.
+
+    global $CFG;
+
+    if (!empty($CFG->allowemailaddresses)) {
+        $allowed = explode(' ', $CFG->allowemailaddresses);
+
+        foreach ($allowed as $allowedpattern) {
+            $allowedpattern = trim($allowedpattern);
+
+            if (!$allowedpattern) {
+                continue;
+            }
+
+            if (false !== mb_strpos($email, $allowedpattern)) {  // Match!
+                return false;
+            }
+        }
+
+        return get_string('emailonlyallowed', '', $CFG->allowemailaddresses);
+    } elseif (!empty($CFG->denyemailaddresses)) {
+        $denied = explode(' ', $CFG->denyemailaddresses);
+
+        foreach ($denied as $deniedpattern) {
+            $deniedpattern = trim($deniedpattern);
+
+            if (!$deniedpattern) {
+                continue;
+            }
+
+            if (false !== mb_strpos($email, $deniedpattern)) {   // Match!
+                return get_string('emailnotallowed', '', $CFG->denyemailaddresses);
+            }
+        }
+    }
+
+    return false;
+}
+
+/// FILE HANDLING  /////////////////////////////////////////////
+
+function make_upload_directory($directory, $shownotices = true)
+{
+    /// $directory = a string of directory names under $CFG->dataroot
+
+    /// eg  stuff/assignment/1
+
+    /// Returns full directory if successful, false if not
+
+    global $CFG;
+
+    $currdir = $CFG->dataroot;
+
+    umask(0000);
+
+    if (!file_exists($currdir)) {
+        if (!mkdir($currdir, $CFG->directorypermissions)) {
+            if ($shownotices) {
+                notify("ERROR: You need to create the directory $currdir with web server write access");
+            }
+
+            return false;
+        }
+    }
+
+    $dirarray = explode('/', $directory);
+
+    foreach ($dirarray as $dir) {
+        $currdir = "$currdir/$dir";
+
+        if (!file_exists($currdir)) {
+            if (!mkdir($currdir, $CFG->directorypermissions)) {
+                if ($shownotices) {
+                    notify("ERROR: Could not find or create a directory ($currdir)");
+                }
+
+                return false;
+            }
+
+            @chmod($currdir, $CFG->directorypermissions);  // Just in case mkdir didn't do it
+        }
+    }
+
+    return $currdir;
+}
+
+function make_mod_upload_directory($courseid)
+{
+    /// Makes an upload directory for a particular module
+
+    global $CFG;
+
+    if (!$moddata = make_upload_directory("$courseid/$CFG->moddata")) {
+        return false;
+    }
+
+    $strreadme = get_string('readme');
+
+    if (file_exists("$CFG->dirroot/lang/$CFG->lang/docs/module_files.txt")) {
+        copy("$CFG->dirroot/lang/$CFG->lang/docs/module_files.txt", "$moddata/$strreadme.txt");
+    } else {
+        copy("$CFG->dirroot/lang/en/docs/module_files.txt", "$moddata/$strreadme.txt");
+    }
+
+    return $moddata;
+}
+
+function valid_uploaded_file($newfile)
+{
+    /// Returns current name of file on disk if true
+
+    if (empty($newfile)) {
+        return '';
+    }
+
+    if (is_uploaded_file($newfile['tmp_name']) and $newfile['size'] > 0) {
+        return $newfile['tmp_name'];
+    }
+
+    return '';
+}
+
+function get_max_upload_file_size($sitebytes = 0, $coursebytes = 0, $modulebytes = 0)
+{
+    /// Returns the maximum size for uploading files
+
+    /// There are seven possible upload limits:
+
+    ///
+
+    /// 1) in Apache using LimitRequestBody (no way of checking or changing this)
+
+    /// 2) in php.ini for 'upload_max_filesize' (can not be changed inside PHP)
+
+    /// 3) in .htaccess for 'upload_max_filesize' (can not be changed inside PHP)
+
+    /// 4) in php.ini for 'post_max_size' (can not be changed inside PHP)
+
+    /// 5) by the Moodle admin in $CFG->maxbytes
+
+    /// 6) by the teacher in the current course $course->maxbytes
+
+    /// 7) by the teacher for the current module, eg $assignment->maxbytes
+
+    ///
+
+    /// These last two are passed to this function as arguments (in bytes).
+
+    /// Anything defined as 0 is ignored.
+
+    /// The smallest of all the non-zero numbers is returned.
+
+    if (!$filesize = ini_get('upload_max_filesize')) {
+        $filesize = '5M';
+    }
+
+    $minimumsize = get_real_size($filesize);
+
+    if ($postsize = ini_get('post_max_size')) {
+        $postsize = get_real_size($postsize);
+
+        if ($postsize < $minimumsize) {
+            $minimumsize = $postsize;
+        }
+    }
+
+    if ($sitebytes and $sitebytes < $minimumsize) {
+        $minimumsize = $sitebytes;
+    }
+
+    if ($coursebytes and $coursebytes < $minimumsize) {
+        $minimumsize = $coursebytes;
+    }
+
+    if ($modulebytes and $modulebytes < $minimumsize) {
+        $minimumsize = $modulebytes;
+    }
+
+    return $minimumsize;
+}
+
+function get_max_upload_sizes($sitebytes = 0, $coursebytes = 0, $modulebytes = 0)
+{
+    /// Related to the above function - this function returns an
+
+    /// array of possible sizes in an array, translated to the
+
+    /// local language.
+
+    if (!$maxsize = get_max_upload_file_size($sitebytes, $coursebytes, $modulebytes)) {
+        return [];
+    }
+
+    $filesize[$maxsize] = display_size($maxsize);
+
+    $sizelist = [
+        10240,
+        51200,
+        102400,
+        512000,
+        1048576,
+        2097152,
+        5242880,
+        10485760,
+        20971520,
+        52428800,
+        104857600,
+    ];
+
+    foreach ($sizelist as $sizebytes) {
+        if ($sizebytes < $maxsize) {
+            $filesize[$sizebytes] = display_size($sizebytes);
+        }
+    }
+
+    krsort($filesize, SORT_NUMERIC);
+
+    return $filesize;
+}
+
+function get_directory_list($rootdir, $excludefile = '', $descend = true, $getdirs = false, $getfiles = true)
+{
+    /// Returns an array with all the filenames in
+
+    /// all subdirectories, relative to the given rootdir.
+
+    /// If excludefile is defined, then that file/directory is ignored
+
+    /// If getdirs is true, then (sub)directories are included in the output
+
+    /// If getfiles is true, then files are included in the output
+
+    /// (at least one of these must be true!)
+
+    $dirs = [];
+
+    if (!$getdirs and !$getfiles) {   // Nothing to show
+        return $dirs;
+    }
+
+    if (!is_dir($rootdir)) {          // Must be a directory
+        return $dirs;
+    }
+
+    if (!$dir = opendir($rootdir)) {  // Can't open it for some reason
+        return $dirs;
+    }
+
+    while (false !== ($file = readdir($dir))) {
+        $firstchar = mb_substr($file, 0, 1);
+
+        if ('.' == $firstchar or 'CVS' == $file or $file == $excludefile) {
+            continue;
+        }
+
+        $fullfile = "$rootdir/$file";
+
+        if ('dir' == filetype($fullfile)) {
+            if ($getdirs) {
+                $dirs[] = $file;
+            }
+
+            if ($descend) {
+                $subdirs = get_directory_list($fullfile, $excludefile, $descend, $getdirs, $getfiles);
+
+                foreach ($subdirs as $subdir) {
+                    $dirs[] = "$file/$subdir";
+                }
+            }
+        } elseif ($getfiles) {
+            $dirs[] = $file;
+        }
+    }
+
+    closedir($dir);
+
+    asort($dirs);
+
+    return $dirs;
+}
+
+function get_directory_size($rootdir, $excludefile = '')
+{
+    /// Adds up all the files in a directory and works out the size
+
+    $size = 0;
+
+    if (!is_dir($rootdir)) {          // Must be a directory
+        return $dirs;
+    }
+
+    if (!$dir = @opendir($rootdir)) {  // Can't open it for some reason
+        return $dirs;
+    }
+
+    while (false !== ($file = readdir($dir))) {
+        $firstchar = mb_substr($file, 0, 1);
+
+        if ('.' == $firstchar or 'CVS' == $file or $file == $excludefile) {
+            continue;
+        }
+
+        $fullfile = "$rootdir/$file";
+
+        if ('dir' == filetype($fullfile)) {
+            $size += get_directory_size($fullfile, $excludefile);
+        } else {
+            $size += filesize($fullfile);
+        }
+    }
+
+    closedir($dir);
+
+    return $size;
+}
+
+function get_real_size($size = 0)
+{
+    /// Converts numbers like 10M into bytes
+
+    if (!$size) {
+        return 0;
+    }
+
+    $scan['MB'] = 1048576;
+
+    $scan['Mb'] = 1048576;
+
+    $scan['M'] = 1048576;
+
+    $scan['m'] = 1048576;
+
+    $scan['KB'] = 1024;
+
+    $scan['Kb'] = 1024;
+
+    $scan['K'] = 1024;
+
+    $scan['k'] = 1024;
+
+    while (list($key) = each($scan)) {
+        if ((mb_strlen($size) > mb_strlen($key)) && (mb_substr($size, mb_strlen($size) - mb_strlen($key)) == $key)) {
+            $size = mb_substr($size, 0, mb_strlen($size) - mb_strlen($key)) * $scan[$key];
+
+            break;
+        }
+    }
+
+    return $size;
+}
+
+function display_size($size)
+{
+    /// Converts bytes into display form
+
+    static $gb, $mb, $kb, $b;
+
+    if (empty($gb)) {
+        $gb = get_string('sizegb');
+
+        $mb = get_string('sizemb');
+
+        $kb = get_string('sizekb');
+
+        $b = get_string('sizeb');
+    }
+
+    if ($size >= 1073741824) {
+        $size = round($size / 1073741824 * 10) / 10 . $gb;
+    } elseif ($size >= 1048576) {
+        $size = round($size / 1048576 * 10) / 10 . $mb;
+    } elseif ($size >= 1024) {
+        $size = round($size / 1024 * 10) / 10 . $kb;
+    } else {
+        $size .= " $b";
+    }
+
+    return $size;
+}
+
+function clean_filename($string)
+{
+    /// Cleans a given filename by removing suspicious or troublesome characters
+
+    /// Only these are allowed:
+
+    ///    alphanumeric _ - .
+
+    $string = eregi_replace("\.\.+", '', $string);
+
+    $string = preg_replace('/[^\.a-zA-Z\d\_-]/', '_', $string); // only allowed chars
+
+    $string = eregi_replace('_+', '_', $string);
+
+    return $string;
+}
+
+/// STRING TRANSLATION  ////////////////////////////////////////
+
+function current_language()
+{
+    /// Returns the code for the current language
+
+    global $CFG, $USER, $SESSION;
+
+    if (!empty($CFG->courselang)) {    // Course language can override all other settings for this page
+        return $CFG->courselang;
+    } elseif (!empty($SESSION->lang)) {    // Session language can override other settings
+        return $SESSION->lang;
+    } elseif (!empty($USER->lang)) {    // User language can override site language
+        return $USER->lang;
+    }
+
+    return $CFG->lang;
+}
+
+function print_string($identifier, $module = '', $a = null)
+{
+    /// Given a string to translate - prints it out.
+
+    echo get_string($identifier, $module, $a);
+}
+
+function get_string($identifier, $module = '', $a = null)
+{
+    /// Return the translated string specified by $identifier as
+
+    /// for $module.  Uses the same format files as STphp.
+
+    /// $a is an object, string or number that can be used
+
+    /// within translation strings
+
+    ///
+
+    /// eg "hello \$a->firstname \$a->lastname"
+
+    /// or "hello \$a"
+
+    global $CFG;
+
+    global $course;     /// Not a nice hack, but quick
+
+    if (empty($CFG->courselang)) {
+        if (!empty($course->lang)) {
+            $CFG->courselang = $course->lang;
+        }
+    }
+
+    $lang = current_language();
+
+    if ('' == $module) {
+        $module = 'moodle';
+    }
+
+    $langpath = "$CFG->dirroot/lang";
+
+    $langfile = "$langpath/$lang/$module.php";
+
+    // Look for the string - if found then return it
+
+    if (file_exists($langfile)) {
+        if ($result = get_string_from_file($identifier, $langfile, '$resultstring')) {
+            eval($result);
+
+            return $resultstring;
+        }
+    }
+
+    // If it's a module, then look within the module pack itself mod/xxxx/lang/en/module.php
+
+    if ('moodle' != $module) {
+        $modlangpath = "$CFG->dirroot/mod/$module/lang";
+
+        $langfile = "$modlangpath/$lang/$module.php";
+
+        if (file_exists($langfile)) {
+            if ($result = get_string_from_file($identifier, $langfile, '$resultstring')) {
+                eval($result);
+
+                return $resultstring;
+            }
+        }
+    }
+
+    // If the preferred language was English we can abort now
+
+    if ('en' == $lang) {
+        return "[[$identifier]]";
+    }
+
+    // Is a parent language defined?  If so, try it.
+
+    if ($result = get_string_from_file('parentlanguage', "$langpath/$lang/moodle.php", '$parentlang')) {
+        eval($result);
+
+        if (!empty($parentlang)) {
+            $langfile = "$langpath/$parentlang/$module.php";
+
+            if (file_exists($langfile)) {
+                if ($result = get_string_from_file($identifier, $langfile, '$resultstring')) {
+                    eval($result);
+
+                    return $resultstring;
+                }
+            }
+        }
+    }
+
+    // Our only remaining option is to try English
+
+    $langfile = "$langpath/en/$module.php";
+
+    if (!file_exists($langfile)) {
+        return "ERROR: No lang file ($langpath/en/$module.php)!";
+    }
+
+    if ($result = get_string_from_file($identifier, $langfile, '$resultstring')) {
+        eval($result);
+
+        return $resultstring;
+    }
+
+    // If it's a module, then look within the module pack itself mod/xxxx/lang/en/module.php
+
+    if ('moodle' != $module) {
+        $langfile = "$modlangpath/en/$module.php";
+
+        if (file_exists($langfile)) {
+            if ($result = get_string_from_file($identifier, $langfile, '$resultstring')) {
+                eval($result);
+
+                return $resultstring;
+            }
+        }
+    }
+
+    return "[[$identifier]]";  // Last resort
+}
+
+function get_string_from_file($identifier, $langfile, $destination)
+{
+    /// This function is only used from get_string().
+
+    static $strings;    // Keep the strings cached in memory.
+
+    if (empty($strings[$langfile])) {
+        $string = [];
+
+        include $langfile;
+
+        $strings[$langfile] = $string;
+    } else {
+        $string = &$strings[$langfile];
+    }
+
+    if (!isset($string[$identifier])) {
+        return false;
+    }
+
+    return "$destination = sprintf(\"" . $string[$identifier] . '");';
+}
+
+function get_strings($array, $module = '')
+{
+    /// Converts an array of strings
+
+    $string = null;
+
+    foreach ($array as $item) {
+        $string->$item = get_string($item, $module);
+    }
+
+    return $string;
+}
+
+function get_list_of_languages()
+{
+    /// Returns a list of language codes and their full names
+
+    global $CFG;
+
+    $languages = [];
+
+    if (!empty($CFG->langlist)) {       // use admin's list of languages
+        $langlist = explode(',', $CFG->langlist);
+
+        foreach ($langlist as $lang) {
+            if (file_exists("$CFG->dirroot/lang/$lang/moodle.php")) {
+                include "$CFG->dirroot/lang/$lang/moodle.php";
+
+                $languages[$lang] = $string['thislanguage'] . " ($lang)";
+
+                unset($string);
+            }
+        }
+    } else {
+        if (!$langdirs = get_list_of_plugins('lang')) {
+            return false;
+        }
+
+        foreach ($langdirs as $lang) {
+            include "$CFG->dirroot/lang/$lang/moodle.php";
+
+            $languages[$lang] = $string['thislanguage'] . " ($lang)";
+
+            unset($string);
+        }
+    }
+
+    return $languages;
+}
+
+function get_list_of_countries()
+{
+    /// Returns a list of country names in the current language
+
+    global $CFG, $USER;
+
+    $lang = current_language();
+
+    if (!file_exists("$CFG->dirroot/lang/$lang/countries.php")) {
+        if ($parentlang = get_string('parentlanguage')) {
+            if (file_exists("$CFG->dirroot/lang/$parentlang/countries.php")) {
+                $lang = $parentlang;
+            } else {
+                $lang = 'en';  // countries.php must exist in this pack
+            }
+        } else {
+            $lang = 'en';  // countries.php must exist in this pack
+        }
+    }
+
+    include "$CFG->dirroot/lang/$lang/countries.php";
+
+    if (!empty($string)) {
+        asort($string);
+    }
+
+    return $string;
+}
+
+function get_list_of_pixnames()
+{
+    /// Returns a list of picture names in the current language
+
+    global $CFG;
+
+    $lang = current_language();
+
+    if (!file_exists("$CFG->dirroot/lang/$lang/pix.php")) {
+        if ($parentlang = get_string('parentlanguage')) {
+            if (file_exists("$CFG->dirroot/lang/$parentlang/pix.php")) {
+                $lang = $parentlang;
+            } else {
+                $lang = 'en';  // countries.php must exist in this pack
+            }
+        } else {
+            $lang = 'en';  // countries.php must exist in this pack
+        }
+    }
+
+    require_once "$CFG->dirroot/lang/$lang/pix.php";
+
+    return $string;
+}
+
+function document_file($file, $include = true)
+{
+    /// Can include a given document file (depends on second
+
+    /// parameter) or just return info about it
+
+    global $CFG;
+
+    $file = clean_filename($file);
+
+    if (empty($file)) {
+        return false;
+    }
+
+    $langs = [current_language(), get_string('parentlanguage'), 'en'];
+
+    foreach ($langs as $lang) {
+        $info->filepath = "$CFG->dirroot/lang/$lang/docs/$file";
+
+        $info->urlpath = "$CFG->wwwroot/lang/$lang/docs/$file";
+
+        if (file_exists($info->filepath)) {
+            if ($include) {
+                include $info->filepath;
+            }
+
+            return $info;
+        }
+    }
+
+    return false;
+}
+
+/// ENCRYPTION  ////////////////////////////////////////////////
+
+function rc4encrypt($data)
+{
+    $password = 'nfgjeingjk';
+
+    return endecrypt($password, $data, '');
+}
+
+function rc4decrypt($data)
+{
+    $password = 'nfgjeingjk';
+
+    return endecrypt($password, $data, 'de');
+}
+
+function endecrypt($pwd, $data, $case)
+{
+    /// Based on a class by Mukul Sabharwal [mukulsabharwal@yahoo.com]
+
+    if ('de' == $case) {
+        $data = urldecode($data);
+    }
+
+    $key[] = '';
+
+    $box[] = '';
+
+    $temp_swap = '';
+
+    $pwd_length = 0;
+
+    $pwd_length = mb_strlen($pwd);
+
+    for ($i = 0; $i <= 255; $i++) {
+        $key[$i] = ord(mb_substr($pwd, ($i % $pwd_length), 1));
+
+        $box[$i] = $i;
+    }
+
+    $x = 0;
+
+    for ($i = 0; $i <= 255; $i++) {
+        $x = ($x + $box[$i] + $key[$i]) % 256;
+
+        $temp_swap = $box[$i];
+
+        $box[$i] = $box[$x];
+
+        $box[$x] = $temp_swap;
+    }
+
+    $temp = '';
+
+    $k = '';
+
+    $cipherby = '';
+
+    $cipher = '';
+
+    $a = 0;
+
+    $j = 0;
+
+    for ($i = 0, $iMax = mb_strlen($data); $i < $iMax; $i++) {
+        $a = ($a + 1) % 256;
+
+        $j = ($j + $box[$a]) % 256;
+
+        $temp = $box[$a];
+
+        $box[$a] = $box[$j];
+
+        $box[$j] = $temp;
+
+        $k = $box[(($box[$a] + $box[$j]) % 256)];
+
+        $cipherby = ord(mb_substr($data, $i, 1)) ^ $k;
+
+        $cipher .= chr($cipherby);
+    }
+
+    if ('de' == $case) {
+        $cipher = urldecode(urlencode($cipher));
+    } else {
+        $cipher = urlencode($cipher);
+    }
+
+    return $cipher;
+}
+
+/// CALENDAR MANAGEMENT  ////////////////////////////////////////////////////////////////
+
+function add_event($event)
+{
+    /// call this function to add an event to the calendar table
+
+    ///  and to call any calendar plugins
+
+    /// The function returns the id number of the resulting record
+
+    /// The object event should include the following:
+
+    ///     $event->name         Name for the event
+
+    ///     $event->description  Description of the event (defaults to '')
+
+    ///     $event->courseid     The id of the course this event belongs to (0 = all courses)
+
+    ///     $event->groupid      The id of the group this event belongs to (0 = no group)
+
+    ///     $event->userid       The id of the user this event belongs to (0 = no user)
+
+    ///     $event->modulename   Name of the module that creates this event
+
+    ///     $event->instance     Instance of the module that owns this event
+
+    ///     $event->eventtype    The type info together with the module info could
+
+    ///                          be used by calendar plugins to decide how to display event
+
+    ///     $event->timestart    Timestamp for start of event
+
+    ///     $event->timeduration Duration (defaults to zero)
+
+    global $CFG;
+
+    $event->timemodified = time();
+
+    if (!$event->id = insert_record('event', $event)) {
+        return false;
+    }
+
+    if (!empty($CFG->calendar)) { // call the add_event function of the selected calendar
+        if (file_exists("$CFG->dirroot/calendar/$CFG->calendar/lib.php")) {
+            require_once "$CFG->dirroot/calendar/$CFG->calendar/lib.php";
+
+            $calendar_add_event = $CFG->calendar . '_add_event';
+
+            if (function_exists($calendar_add_event)) {
+                $calendar_add_event($event);
+            }
+        }
+    }
+
+    return $event->id;
+}
+
+function update_event($event)
+{
+    /// call this function to update an event in the calendar table
+
+    /// the event will be identified by the id field of the $event object
+
+    global $CFG;
+
+    $event->timemodified = time();
+
+    if (!empty($CFG->calendar)) { // call the update_event function of the selected calendar
+        if (file_exists("$CFG->dirroot/calendar/$CFG->calendar/lib.php")) {
+            require_once "$CFG->dirroot/calendar/$CFG->calendar/lib.php";
+
+            $calendar_update_event = $CFG->calendar . '_update_event';
+
+            if (function_exists($calendar_update_event)) {
+                $calendar_update_event($event);
+            }
+        }
+    }
+
+    return update_record('event', $event);
+}
+
+function delete_event($id)
+{
+    /// call this function to delete the event with id $id from calendar table
+
+    global $CFG;
+
+    if (!empty($CFG->calendar)) { // call the delete_event function of the selected calendar
+        if (file_exists("$CFG->dirroot/calendar/$CFG->calendar/lib.php")) {
+            require_once "$CFG->dirroot/calendar/$CFG->calendar/lib.php";
+
+            $calendar_delete_event = $CFG->calendar . '_delete_event';
+
+            if (function_exists($calendar_delete_event)) {
+                $calendar_delete_event($id);
+            }
+        }
+    }
+
+    return delete_records('event', 'id', $id);
+}
+
+function hide_event($event)
+{
+    /// call this function to hide an event in the calendar table
+
+    /// the event will be identified by the id field of the $event object
+
+    global $CFG;
+
+    if (!empty($CFG->calendar)) { // call the update_event function of the selected calendar
+        if (file_exists("$CFG->dirroot/calendar/$CFG->calendar/lib.php")) {
+            require_once "$CFG->dirroot/calendar/$CFG->calendar/lib.php";
+
+            $calendar_hide_event = $CFG->calendar . '_hide_event';
+
+            if (function_exists($calendar_hide_event)) {
+                $calendar_hide_event($event);
+            }
+        }
+    }
+
+    return set_field('event', 'visible', 0, 'id', $event->id);
+}
+
+function show_event($event)
+{
+    /// call this function to unhide an event in the calendar table
+
+    /// the event will be identified by the id field of the $event object
+
+    global $CFG;
+
+    if (!empty($CFG->calendar)) { // call the update_event function of the selected calendar
+        if (file_exists("$CFG->dirroot/calendar/$CFG->calendar/lib.php")) {
+            require_once "$CFG->dirroot/calendar/$CFG->calendar/lib.php";
+
+            $calendar_show_event = $CFG->calendar . '_show_event';
+
+            if (function_exists($calendar_show_event)) {
+                $calendar_show_event($event);
+            }
+        }
+    }
+
+    return set_field('event', 'visible', 1, 'id', $event->id);
+}
+
+/// ENVIRONMENT CHECKING  ////////////////////////////////////////////////////////////
+
+function get_list_of_plugins($plugin = 'mod', $exclude = '')
+{
+    /// Lists plugin directories within some directory
+
+    global $CFG;
+
+    $basedir = opendir("$CFG->dirroot/$plugin");
+
+    while ($dir = readdir($basedir)) {
+        $firstchar = mb_substr($dir, 0, 1);
+
+        if ('.' == $firstchar or 'CVS' == $dir or '_vti_cnf' == $dir or $dir == $exclude) {
+            continue;
+        }
+
+        if ('dir' != filetype("$CFG->dirroot/$plugin/$dir")) {
+            continue;
+        }
+
+        $plugins[] = $dir;
+    }
+
+    if ($plugins) {
+        asort($plugins);
+    }
+
+    return $plugins;
+}
+
+function check_php_version($version = '4.1.0')
+{
+    /// Returns true is the current version of PHP is greater that the specified one
+
+    $minversion = (int)str_replace('.', '', $version);
+
+    $curversion = (int)str_replace('.', '', phpversion());
+
+    return ($curversion >= $minversion);
+}
+
+function check_browser_version($brand = 'MSIE', $version = 5.5)
+{
+    /// Checks to see if is a browser matches the specified
+
+    /// brand and is equal or better version.
+
+    $agent = $_SERVER['HTTP_USER_AGENT'];
+
+    if (empty($agent)) {
+        return false;
+    }
+
+    switch ($brand) {
+        case 'Gecko':   /// Gecko based browsers
+
+            if (mb_substr_count($agent, 'Camino')) {     // MacOS X Camino not supported.
+                return false;
+            }
+
+            // the proper string - Gecko/CCYYMMDD Vendor/Version
+            if (preg_match("^([a-zA-Z]+)/([0-9]+\.[0-9]+) \((.*)\) (.*)$", $agent, $match)) {
+                if (preg_match('^([Gecko]+)/([0-9]+)', $match[4], $reldate)) {
+                    if ($reldate[2] > $version) {
+                        return true;
+                    }
+                }
+            }
+            break;
+        case 'MSIE':   /// Internet Explorer
+
+            if (mb_strpos($agent, 'Opera')) {     // Reject Opera
+                return false;
+            }
+            $string = explode(';', $agent);
+            if (!isset($string[1])) {
+                return false;
+            }
+            $string = explode(' ', trim($string[1]));
+            if (!isset($string[0]) and !isset($string[1])) {
+                return false;
+            }
+            if ($string[0] == $brand and (float)$string[1] >= $version) {
+                return true;
+            }
+            break;
+    }
+
+    return false;
+}
+
+function ini_get_bool($ini_get_arg)
+{
+    /// This function makes the return value of ini_get consistent if you are
+
+    /// setting server directives through the .htaccess file in apache.
+
+    /// Current behavior for value set from php.ini On = 1, Off = [blank]
+
+    /// Current behavior for value set from .htaccess On = On, Off = Off
+
+    /// Contributed by jdell@unr.edu
+
+    $temp = ini_get($ini_get_arg);
+
+    if ('1' == $temp or 'on' == mb_strtolower($temp)) {
+        return true;
+    }
+
+    return false;
+}
+
+function can_use_richtext_editor()
+{
+    /// Compatibility stub to provide backward compatibility
+
+    return can_use_html_editor();
+}
+
+function can_use_html_editor()
+{
+    /// Is the HTML editor enabled?  This depends on site and user
+
+    /// settings, as well as the current browser being used.
+
+    /// Returns false is editor is not being used, otherwise
+
+    /// returns "MSIE" or "Gecko"
+
+    global $USER, $CFG;
+
+    if (!empty($USER->htmleditor) and !empty($CFG->htmleditor)) {
+        if (check_browser_version('MSIE', 5.5)) {
+            return 'MSIE';
+        } elseif (check_browser_version('Gecko', 20030516)) {
+            return 'Gecko';
+        }
+    }
+
+    return false;
+}
+
+function check_gd_version()
+{
+    /// Hack to find out the GD version by parsing phpinfo output
+
+    $gdversion = 0;
+
+    if (function_exists('gd_info')) {
+        $gd_info = gd_info();
+
+        if (mb_substr_count($gd_info['GD Version'], '2.')) {
+            $gdversion = 2;
+        } elseif (mb_substr_count($gd_info['GD Version'], '1.')) {
+            $gdversion = 1;
+        }
+    } else {
+        ob_start();
+
+        phpinfo(8);
+
+        $phpinfo = ob_get_contents();
+
+        ob_end_clean();
+
+        $phpinfo = explode("\n", $phpinfo);
+
+        foreach ($phpinfo as $text) {
+            $parts = explode('</td>', $text);
+
+            foreach ($parts as $key => $val) {
+                $parts[$key] = trim(strip_tags($val));
+            }
+
+            if ('GD Version' == $parts[0]) {
+                if (mb_substr_count($parts[1], '2.0')) {
+                    $parts[1] = '2.0';
+                }
+
+                $gdversion = (int)$parts[1];
+            }
+        }
+    }
+
+    return $gdversion;   // 1, 2 or 0
+}
+
+function moodle_needs_upgrading()
+{
+    /// Checks version numbers of Main code and all modules to see
+
+    /// if there are any mismatches ... returns true or false
+
+    global $CFG;
+
+    require_once "$CFG->dirroot/version.php";  # defines $version and upgrades
+
+    if ($CFG->version) {
+        if ($version > $CFG->version) {
+            return true;
+        }
+
+        if ($mods = get_list_of_plugins('mod')) {
+            foreach ($mods as $mod) {
+                $fullmod = "$CFG->dirroot/mod/$mod";
+
+                unset($module);
+
+                if (!is_readable("$fullmod/version.php")) {
+                    notify("Module '$mod' is not readable - check permissions");
+
+                    continue;
+                }
+
+                require_once "$fullmod/version.php";  # defines $module with version etc
+
+                if ($currmodule = get_record('modules', 'name', $mod)) {
+                    if ($module->version > $currmodule->version) {
+                        return true;
+                    }
+                }
+            }
+        }
+    } else {
+        return true;
+    }
+
+    return false;
+}
+
+/// MISCELLANEOUS ////////////////////////////////////////////////////////////////////
+
+function notify_login_failures()
+{
+    global $CFG, $db;
+
+    // notify admin users or admin user of any failed logins (since last notification).
+
+    switch ($CFG->notifyloginfailures) {
+        case 'mainadmin':
+            $recip = [get_admin()];
+            break;
+        case 'alladmins':
+            $recip = get_admins();
+            break;
+    }
+
+    if (empty($CFG->lastnotifyfailure)) {
+        $CFG->lastnotifyfailure = 0;
+    }
+
+    // we need to deal with the threshold stuff first.
+
+    if (empty($CFG->notifyloginthreshold)) {
+        $CFG->notifyloginthreshold = 10; // default to something sensible.
+    }
+
+    $notifyipsrs = $db->Execute(
+        "SELECT ip FROM {$CFG->prefix}log WHERE time > {$CFG->lastnotifyfailure} 
+                          AND module='login' AND action='error' GROUP BY ip HAVING count(*) > $CFG->notifyloginthreshold"
+    );
+
+    $notifyusersrs = $db->Execute(
+        "SELECT info FROM {$CFG->prefix}log WHERE time > {$CFG->lastnotifyfailure} 
+                          AND module='login' AND action='error' GROUP BY info HAVING count(*) > $CFG->notifyloginthreshold"
+    );
+
+    if ($notifyipsrs) {
+        $ipstr = '';
+
+        while (false !== ($row = $notifyipsrs->FetchRow())) {
+            $ipstr .= "'" . $row['ip'] . "',";
+        }
+
+        $ipstr = mb_substr($ipstr, 0, -1);
+    }
+
+    if ($notifyusersrs) {
+        $userstr = '';
+
+        while (false !== ($row = $notifyusersrs->FetchRow())) {
+            $userstr .= "'" . $row['info'] . "',";
+        }
+
+        $userstr = mb_substr($userstr, 0, -1);
+    }
+
+    if (mb_strlen($userstr) > 0 || mb_strlen($ipstr) > 0) {
+        $count = 0;
+
+        $logs = get_logs(
+            "time > {$CFG->lastnotifyfailure} AND module='login' AND action='error' " . ((mb_strlen($ipstr) > 0 && mb_strlen($userstr) > 0) ? " AND ( ip IN ($ipstr) OR info IN ($userstr) ) " : ((0 != mb_strlen($ipstr)) ? " AND ip IN ($ipstr) " : " AND info IN ($userstr) ")),
+            'l.time DESC',
+            '',
+            '',
+            $count
+        );
+
+        // if we haven't run in the last hour and we have something useful to report and we are actually supposed to be reporting to somebody
+
+        if (is_array($recip) and count($recip) > 0 and ((time() - (60 * 60)) > $CFG->lastnotifyfailure) and is_array($logs) and count($logs) > 0) {
+            $message = '';
+
+            $site = get_site();
+
+            $subject = get_string('notifyloginfailuressubject', '', $site->fullname);
+
+            $message .= get_string('notifyloginfailuresmessagestart', '', $CFG->wwwroot) . ((0 != $CFG->lastnotifyfailure) ? '(' . userdate($CFG->lastnotifyfailure) . ')' : '') . "\n\n";
+
+            foreach ($logs as $log) {
+                $log->time = userdate($log->time);
+
+                $message .= get_string('notifyloginfailuresmessage', '', $log) . "\n";
+            }
+
+            $message .= "\n\n" . get_string('notifyloginfailuresmessageend', '', $CFG->wwwroot) . "\n\n";
+
+            foreach ($recip as $admin) {
+                mtrace("Emailing $admin->username about " . count($logs) . ' failed login attempts');
+
+                email_to_user($admin, get_admin(), $subject, $message);
+            }
+
+            $conf->name = 'lastnotifyfailure';
+
+            $conf->value = time();
+
+            if ($current = get_record('config', 'name', 'lastnotifyfailure')) {
+                $conf->id = $current->id;
+
+                if (!update_record('config', $conf)) {
+                    mtrace('Could not update last notify time');
+                }
+            } elseif (!insert_record('config', $conf)) {
+                mtrace('Could not set last notify time');
+            }
+        }
+    }
+}
+
+function moodle_setlocale($locale = '')
+{
+    global $SESSION, $USER, $CFG;
+
+    if ($locale) {
+        $CFG->locale = $locale;
+    } elseif (!empty($CFG->courselang) and ($CFG->courselang != $CFG->lang)) {
+        $CFG->locale = get_string('locale');
+    } elseif (!empty($SESSION->lang) and ($SESSION->lang != $CFG->lang)) {
+        $CFG->locale = get_string('locale');
+    } elseif (!empty($USER->lang) and ($USER->lang != $CFG->lang)) {
+        $CFG->locale = get_string('locale');
+    } elseif (empty($CFG->locale)) {
+        $CFG->locale = get_string('locale');
+
+        set_config('locale', $CFG->locale);   // cache it to save lookups in future
+    }
+
+    setlocale(LC_TIME, $CFG->locale);
+
+    setlocale(LC_COLLATE, $CFG->locale);
+
+    if ('tr_TR' != $CFG->locale) {            // To workaround a well-known PHP bug with Turkish
+        setlocale(LC_CTYPE, $CFG->locale);
+    }
+}
+
+function moodle_strtolower($string, $encoding = '')
+{
+    /// Converts string to lowercase using most compatible  function available
+
+    if (function_exists('mb_strtolower')) {
+        if ('' === $encoding) {
+            return mb_strtolower($string);          //use multibyte support with default encoding
+        }
+
+        return mb_strtolower($string, $encoding); //use given encoding
+    }
+
+    return mb_strtolower($string);                // use common function what rely on current locale setting
+}
+
+function count_words($string)
+{
+    /// Words are defined as things between whitespace
+
+    $string = strip_tags($string);
+
+    return count(preg_preg_split("/\w\b/", $string)) - 1;
+}
+
+function random_string($length = 15)
+{
+    $pool = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+    $pool .= 'abcdefghijklmnopqrstuvwxyz';
+
+    $pool .= '0123456789';
+
+    $poollen = mb_strlen($pool);
+
+    // mt_srand((double)microtime() * 1000000);
+
+    $string = '';
+
+    for ($i = 0; $i < $length; $i++) {
+        $string .= mb_substr($pool, (mt_rand() % ($poollen)), 1);
+    }
+
+    return $string;
+}
+
+function getweek($startdate, $thedate)
+{
+    /// Given dates in seconds, how many weeks is the date from startdate
+
+    /// The first week is 1, the second 2 etc ...
+
+    if ($thedate < $startdate) {   // error
+        return 0;
+    }
+
+    return floor(($thedate - $startdate) / 604800.0) + 1;
+}
+
+function generate_password($maxlen = 10)
+{
+    /// returns a randomly generated password of length $maxlen.  inspired by
+
+    /// http://www.phpbuilder.com/columns/jesus19990502.php3
+
+    global $CFG;
+
+    $fillers = '1234567890!$-+';
+
+    $wordlist = file($CFG->wordlist);
+
+    mt_srand((float)microtime() * 1000000);
+
+    $word1 = trim($wordlist[mt_rand(0, count($wordlist) - 1)]);
+
+    $word2 = trim($wordlist[mt_rand(0, count($wordlist) - 1)]);
+
+    $filler1 = $fillers[mt_rand(0, mb_strlen($fillers) - 1)];
+
+    return mb_substr($word1 . $filler1 . $word2, 0, $maxlen);
+}
+
+function format_float($num, $places = 1)
+{
+    /// Given a float, prints it nicely
+
+    return sprintf("%.$places" . 'f', $num);
+}
+
+function swapshuffle($array)
+{
+    /// Given a simple array, this shuffles it up just like shuffle()
+
+    /// Unlike PHP's shuffle() ihis function works on any machine.
+
+    mt_srand((float)microtime() * 10000000);
+
+    $last = count($array) - 1;
+
+    for ($i = 0; $i <= $last; $i++) {
+        $from = mt_rand(0, $last);
+
+        $curr = $array[$i];
+
+        $array[$i] = $array[$from];
+
+        $array[$from] = $curr;
+    }
+
+    return $array;
+}
+
+function swapshuffle_assoc($array)
+{
+    /// Like swapshuffle, but works on associative arrays
+
+    $newkeys = swapshuffle(array_keys($array));
+
+    foreach ($newkeys as $newkey) {
+        $newarray[$newkey] = $array[$newkey];
+    }
+
+    return $newarray;
+}
+
+function draw_rand_array($array, $draws)
+{
+    /// Given an arbitrary array, and a number of draws,
+
+    /// this function returns an array with that amount
+
+    /// of items.  The indexes are retained.
+
+    mt_srand((float)microtime() * 10000000);
+
+    $return = [];
+
+    $last = count($array);
+
+    if ($draws > $last) {
+        $draws = $last;
+    }
+
+    while ($draws > 0) {
+        $last--;
+
+        $keys = array_keys($array);
+
+        $rand = mt_rand(0, $last);
+
+        $return[$keys[$rand]] = $array[$keys[$rand]];
+
+        unset($array[$keys[$rand]]);
+
+        $draws--;
+    }
+
+    return $return;
+}
+
+function microtime_diff($a, $b)
+{
+    [$a_dec, $a_sec] = explode(' ', $a);
+
+    [$b_dec, $b_sec] = explode(' ', $b);
+
+    return $b_sec - $a_sec + $b_dec - $a_dec;
+}
+
+function make_menu_from_list($list, $separator = ',')
+{
+    /// Given a list (eg a,b,c,d,e) this function returns
+
+    /// an array of 1->a, 2->b, 3->c etc
+
+    $array = array_reverse(explode($separator, $list), true);
+
+    foreach ($array as $key => $item) {
+        $outarray[$key + 1] = trim($item);
+    }
+
+    return $outarray;
+}
+
+function make_grades_menu($gradingtype)
+{
+    /// Creates an array that represents all the current grades that
+
+    /// can be chosen using the given grading type.  Negative numbers
+
+    /// are scales, zero is no grade, and positive numbers are maximum
+
+    /// grades.
+
+    $grades = [];
+
+    if ($gradingtype < 0) {
+        if ($scale = get_record('scale', 'id', -$gradingtype)) {
+            return make_menu_from_list($scale->scale);
+        }
+    } elseif ($gradingtype > 0) {
+        for ($i = $gradingtype; $i >= 0; $i--) {
+            $grades[$i] = "$i / $gradingtype";
+        }
+
+        return $grades;
+    }
+
+    return $grades;
+}
+
+function course_scale_used($courseid, $scaleid)
+{
+    ////This function returns the nummber of activities
+
+    ////using scaleid in a courseid
+
+    global $CFG;
+
+    $return = 0;
+
+    if (!empty($scaleid)) {
+        if ($cms = get_course_mods($courseid)) {
+            foreach ($cms as $cm) {
+                //Check cm->name/lib.php exists
+
+                if (file_exists($CFG->dirroot . '/mod/' . $cm->modname . '/lib.php')) {
+                    require_once $CFG->dirroot . '/mod/' . $cm->modname . '/lib.php';
+
+                    $function_name = $cm->modname . '_scale_used';
+
+                    if (function_exists($function_name)) {
+                        if ($function_name($cm->instance, $scaleid)) {
+                            $return++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return $return;
+}
+
+function site_scale_used($scaleid)
+{
+    ////This function returns the nummber of activities
+
+    ////using scaleid in the entire site
+
+    global $CFG;
+
+    $return = 0;
+
+    if (!empty($scaleid)) {
+        if ($courses = get_courses()) {
+            foreach ($courses as $course) {
+                $return += course_scale_used($course->id, $scaleid);
+            }
+        }
+    }
+
+    return $return;
+}
+
+function make_unique_id_code($extra = '')
+{
+    $hostname = 'unknownhost';
+
+    if (!empty($_SERVER['HTTP_HOST'])) {
+        $hostname = $_SERVER['HTTP_HOST'];
+    } elseif (!empty($_ENV['HTTP_HOST'])) {
+        $hostname = $_ENV['HTTP_HOST'];
+    } elseif (!empty($_SERVER['SERVER_NAME'])) {
+        $hostname = $_SERVER['SERVER_NAME'];
+    } elseif (!empty($_ENV['SERVER_NAME'])) {
+        $hostname = $_ENV['SERVER_NAME'];
+    }
+
+    $date = gmdate('ymdHis');
+
+    $random = random_string(6);
+
+    if ($extra) {
+        return "$hostname+$date+$random+$extra";
+    }
+
+    return "$hostname+$date+$random";
+}
+
+/**
+ * Function to check the passed address is within the passed subnet
+ *
+ * The parameter is a comma separated string of subnet definitions.
+ * Subnet strings can be in one of two formats:
+ *   1: xxx.xxx.xxx.xxx/xx
+ *   2: xxx.xxx
+ * Return boolean
+ * Code for type 1 modified from user posted comments by mediator at
+ * http://au.php.net/manual/en/function.ip2long.php
+ *
+ * @param mixed $addr
+ * @param mixed $subnetstr
+ * @return bool
+ */
+function address_in_subnet($addr, $subnetstr)
+{
+    $subnets = explode(',', $subnetstr);
+
+    $found = false;
+
+    $addr = trim($addr);
+
+    foreach ($subnets as $subnet) {
+        $subnet = trim($subnet);
+
+        if (false !== mb_strpos($subnet, '/')) { /// type 1
+            [$ip, $mask] = explode('/', $subnet);
+
+            $mask = 0xffffffff << (32 - $mask);
+
+            $found = ((ip2long($addr) & $mask) == (ip2long($ip) & $mask));
+        } else { /// type 2
+            $found = (0 === mb_strpos($addr, $subnet));
+        }
+
+        if ($found) {
+            continue;
+        }
+    }
+
+    return $found;
+}
+
+function mtrace($string, $eol = "\n")
+{
+    // For outputting debugging info
+
+    if (defined('STDOUT')) {
+        fwrite(STDOUT, $string . $eol);
+    } else {
+        echo "$string$eol";
+    }
+
+    flush();
+}
+
+//Replace 1 or more slashes or backslashes to 1 slash
+function cleardoubleslashes($path)
+{
+    return preg_replace('/(\/|\\\){1,}/', '/', $path);
+}
+
+function zip_files($originalfiles, $destination)
+{
+    //Zip an array of files/dirs to a destination zip file
+
+    //Both parameters must be FULL paths to the files/dirs
+
+    global $CFG;
+
+    //Extract everything from destination
+
+    $path_parts = pathinfo(cleardoubleslashes($destination));
+
+    $destpath = $path_parts['dirname'];       //The path of the zip file
+    $destfilename = $path_parts['basename'];  //The name of the zip file
+    $extension = $path_parts['extension'];    //The extension of the file
+
+    //If no file, error
+
+    if (empty($destfilename)) {
+        return false;
+    }
+
+    //If no extension, add it
+
+    if (empty($extension)) {
+        $extension = 'zip';
+
+        $destfilename .= '.' . $extension;
+    }
+
+    //Check destination path exists
+
+    if (!is_dir($destpath)) {
+        return false;
+    }
+
+    //Check destination path is writable. TODO!!
+
+    //Clean destination filename
+
+    $destfilename = clean_filename($destfilename);
+
+    //Now check and prepare every file
+
+    $files = [];
+
+    $origpath = null;
+
+    foreach ($originalfiles as $file) {  //Iterate over each file
+        //Check for every file
+        $tempfile = cleardoubleslashes($file); // no doubleslashes!
+        //Calculate the base path for all files if it isn't set
+        if (null === $origpath) {
+            $origpath = rtrim(cleardoubleslashes(dirname($tempfile)), '/');
+        }
+
+        //See if the file is readable
+        if (!is_readable($tempfile)) {  //Is readable
+            continue;
+        }
+
+        //See if the file/dir is in the same directory than the rest
+
+        if (rtrim(cleardoubleslashes(dirname($tempfile)), '/') != $origpath) {
+            continue;
+        }
+
+        //Add the file to the array
+
+        $files[] = $tempfile;
+    }
+
+    //Everything is ready:
+
+    //    -$origpath is the path where ALL the files to be compressed reside (dir).
+
+    //    -$destpath is the destination path where the zip file will go (dir).
+
+    //    -$files is an array of files/dirs to compress (fullpath)
+
+    //    -$destfilename is the name of the zip file (without path)
+
+    //print_object($files);                  //Debug
+
+    if (empty($CFG->zip)) {    // Use built-in php-based zip function
+        require_once "$CFG->libdir/pclzip/pclzip.lib.php";
+
+        $archive = new PclZip(cleardoubleslashes("$destpath/$destfilename"));
+
+        if (($list = 0 == $archive->create($files, PCLZIP_OPT_REMOVE_PATH, $origpath))) {
+            notice($archive->errorInfo(true));
+
+            return false;
+        }
+    } else {                   // Use external zip program
+        $filestozip = '';
+
+        foreach ($files as $filetozip) {
+            $filestozip .= escapeshellarg(basename($filetozip));
+
+            $filestozip .= ' ';
+        }
+
+        //Construct the command
+
+        $separator = 'WIN' === mb_strtoupper(mb_substr(PHP_OS, 0, 3)) ? ' &' : ' ;';
+
+        $command = 'cd ' . escapeshellarg($origpath) . $separator . escapeshellarg($CFG->zip) . ' -r ' . escapeshellarg(cleardoubleslashes("$destpath/$destfilename")) . ' ' . $filestozip;
+
+        //All converted to backslashes in WIN
+
+        if ('WIN' === mb_strtoupper(mb_substr(PHP_OS, 0, 3))) {
+            $command = str_replace('/', '\\', $command);
+        }
+
+        exec($command);
+    }
+
+    return true;
+}
+
+function unzip_file($zipfile, $destination = '', $showstatus = true)
+{
+    //Unzip one zip file to a destination dir
+
+    //Both parameters must be FULL paths
+
+    //If destination isn't specified, it will be the
+
+    //SAME directory where the zip file resides.
+
+    global $CFG;
+
+    //Extract everything from zipfile
+
+    $path_parts = pathinfo(cleardoubleslashes($zipfile));
+
+    $zippath = $path_parts['dirname'];       //The path of the zip file
+    $zipfilename = $path_parts['basename'];  //The name of the zip file
+    $extension = $path_parts['extension'];    //The extension of the file
+
+    //If no file, error
+
+    if (empty($zipfilename)) {
+        return false;
+    }
+
+    //If no extension, error
+
+    if (empty($extension)) {
+        return false;
+    }
+
+    //If no destination, passed let's go with the same directory
+
+    if (empty($destination)) {
+        $destination = $zippath;
+    }
+
+    //Clear $destination
+
+    $destpath = rtrim(cleardoubleslashes($destination), '/');
+
+    //Check destination path exists
+
+    if (!is_dir($destpath)) {
+        return false;
+    }
+
+    //Check destination path is writable. TODO!!
+
+    //Everything is ready:
+
+    //    -$zippath is the path where the zip file resides (dir)
+
+    //    -$zipfilename is the name of the zip file (without path)
+
+    //    -$destpath is the destination path where the zip file will uncompressed (dir)
+
+    if (empty($CFG->unzip)) {    // Use built-in php-based unzip function
+        require_once "$CFG->libdir/pclzip/pclzip.lib.php";
+
+        $archive = new PclZip(cleardoubleslashes("$zippath/$zipfilename"));
+
+        if (!$list = $archive->extract(
+            PCLZIP_OPT_PATH,
+            $destpath,
+            PCLZIP_CB_PRE_EXTRACT,
+            'unzip_cleanfilename'
+        )) {
+            notice($archive->errorInfo(true));
+
+            return false;
+        }
+    } else {                     // Use external unzip program
+        $separator = 'WIN' === mb_strtoupper(mb_substr(PHP_OS, 0, 3)) ? ' &' : ' ;';
+
+        $redirection = 'WIN' === mb_strtoupper(mb_substr(PHP_OS, 0, 3)) ? '' : ' 2>&1';
+
+        $command = 'cd ' . escapeshellarg($zippath) . $separator . escapeshellarg($CFG->unzip) . ' -o ' . escapeshellarg(cleardoubleslashes("$zippath/$zipfilename")) . ' -d ' . escapeshellarg($destpath) . $redirection;
+
+        //All converted to backslashes in WIN
+
+        if ('WIN' === mb_strtoupper(mb_substr(PHP_OS, 0, 3))) {
+            $command = str_replace('/', '\\', $command);
+        }
+
+        exec($command, $list);
+    }
+
+    //Display some info about the unzip execution
+
+    if ($showstatus) {
+        unzip_show_status($list, $destpath);
+    }
+
+    return true;
+}
+
+function unzip_cleanfilename($p_event, &$p_header)
+{
+    //This function is used as callback in unzip_file() function
+    //to clean illegal characters for given platform and to prevent directory traversal.
+    //Produces the same result as info-zip unzip.
+    $p_header['filename'] = preg_replace('[[:cntrl:]]', '', $p_header['filename']); //strip control chars first!
+    $p_header['filename'] = preg_replace('\.\.+', '', $p_header['filename']); //directory traversal protection
+    if ('WIN' === mb_strtoupper(mb_substr(PHP_OS, 0, 3))) {
+        $p_header['filename'] = preg_replace('[:*"?<>|]', '_', $p_header['filename']); //replace illegal chars
+        $p_header['filename'] = preg_replace('^([a-zA-Z])_', '\1:', $p_header['filename']); //repair drive letter
+    }
+
+    //Add filtering for other systems here
+
+    // BSD: none (tested)
+
+    // Linux: ??
+
+    // MacosX: ??
+
+    $p_header['filename'] = cleardoubleslashes($p_header['filename']); //normalize the slashes/backslashes
+
+    return 1;
+}
+
+function unzip_show_status($list, $removepath)
+{
+    //This function shows the results of the unzip execution
+
+    //depending of the value of the $CFG->zip, results will be
+
+    //text or an array of files.
+
+    global $CFG;
+
+    if (empty($CFG->unzip)) {    // Use built-in php-based zip function
+        $strname = get_string('name');
+
+        $strsize = get_string('size');
+
+        $strmodified = get_string('modified');
+
+        $strstatus = get_string('status');
+
+        echo '<table cellpadding="4" cellspacing="2" border="0" width=640>';
+
+        echo "<tr><th align=left>$strname</th>";
+
+        echo "<th align=right>$strsize</th>";
+
+        echo "<th align=right>$strmodified</th>";
+
+        echo "<th align=right>$strstatus</th></tr>";
+
+        foreach ($list as $item) {
+            echo '<tr>';
+
+            $item['filename'] = str_replace(cleardoubleslashes($removepath) . '/', '', $item['filename']);
+
+            print_cell('left', $item['filename']);
+
+            if (!$item['folder']) {
+                print_cell('right', display_size($item['size']));
+            } else {
+                echo '<td>&nbsp;</td>';
+            }
+
+            $filedate = userdate($item['mtime'], get_string('strftimedatetime'));
+
+            print_cell('right', $filedate);
+
+            print_cell('right', $item['status']);
+
+            echo '</tr>';
+        }
+
+        echo '</table>';
+    } else {                   // Use external zip program
+        print_simple_box_start('center');
+
+        echo '<PRE>';
+
+        foreach ($list as $item) {
+            echo str_replace(cleardoubleslashes($removepath . '/'), '', $item) . '<br>';
+        }
+
+        echo '</PRE>';
+
+        print_simple_box_end();
+    }
+}
+
+// vim:autoindent:expandtab:shiftwidth=4:tabstop=4:tw=140:
+?>

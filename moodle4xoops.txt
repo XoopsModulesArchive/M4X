@@ -1,0 +1,157 @@
+Moodle4Xoops V1.4.2+ build 2004083126 Final *2*
+08/12/2004
+
+#####################################################
+#  Francais
+#####################################################
+#  Moodle4Xoops
+#  Adaptation de Moodle : Jerome BAUDIN
+#  j.baudin@moodle4xoops.euro.tm - http://www.moodle4xoops.euro.tm
+#  Teste sur Xoops 2.0.7.3
+#  Devrait fonctionner sur Xoops 2.0.X.X
+#
+#  Site de demonstrastion : http://www.moodle4xoops.euro.tm 
+#
+#  Moodle est un Learning Management Systems cree par Martin Dougiamas
+#  http://moodle.org
+#  Licence : GNU
+#  
+#  Licence de Moodle
+#  
+#      Le nom Moodle est une marque enregistree du Moodle Trust.
+#      Vous avez le droit d'utiliser ce nom pour toute activite en relation avec le logiciel decrit ci-dessous.
+#  
+#      Le logiciel Moodle est publie sous le Copyright © 1999-2004, Martin Dougiamas.
+#  
+#      Ce programme est libre, vous pouvez le redistribuer et/ou le modifier selon les termes de la Licence Publique Generale GNU publiee par la Free Software Foundation (version 2 ou bien toute autre version ulterieure choisie par vous).
+#  
+#      Ce programme est distribue car potentiellement utile, mais SANS AUCUNE GARANTIE, ni explicite ni implicite, y compris les garanties de commercialisation ou d'adaptation dans un but specifique. Reportez-vous a la Licence Publique Generale GNU (voir ci-dessous) pour plus de details.
+#####################################################
+
+
+1 - Installation
+-----------------------------
+Decompressez le fichier d'installation de Moodle4Xoops dans le repertoire /modules de Xoops.
+Decompressez le fichier d'installation de Moodle dans le repertoire /modules/M4X
+Copiez tous les fichiers /modules/M4X/moodle_M4X dans le repertoire /modules/M4X/moodle pour patcher moodle.
+Le repertoire /modules/M4X/moodle contient tout le systeme Moodle modifie pour fonctionner avec Xoops.
+
+Les fichiers de Moodle4Xoops sont installes.
+
+Lors de l'installation, Moodle4Xoops recupere les parametres de Xoops pour la connexion a la base de donnees.
+Vous pouvez utiliser d'autres parametres.
+
+2 - Installation dans Xoops
+---------------------------
+- Installez le module dans "Panneau De Controle/System Admin/Modules"
+- Cliquez sur l'icone de Moodle dans le "Panneau De Controle" de Xoops, puis sur "Installation" et suivez les instructions.
+Par defaut, Moodle4Xoops s'ouvrira dans une autre fenetre pour continuer son installation.
+Vous pouvez configurer Moodle4Xoops pour qu'il s'integre dans Xoops en configurant l'affichage dans le Panneau de controle de Xoops / Moodle4Xoops / Preferences
+
+3 - Installation de Moodle
+--------------------------
+
+---- ATTENTION ----
+Moodle demande le login qui aura les droits de configuration et de gestion.
+Utilisez le meme login et mot de passe utilises pour Xoops.
+ex : webmaster, root, admin, ...
+-------------------
+
+-- Auto Login --
+Sur l'ecran de configuration "Parametres techniques", configurez 'forcelogin' a Oui.
+Cette option activera l'auto login d'un utilisateur deja connecte sous Xoops.
+Vous pouvez laissez 'forcelogin' a Non, si vous voulez laisser le choix à l'utilisateur connecte de se connecter ou non a Moodle.
+De plus, cela permet de laisser l'acces a Moodle aux visiteurs anonymes.
+
+-- Parametres de connexion Xoops appliques a Moodle --
+Allez dans la partie Admin de Moodle, puis dans "Utilisateur > Authentification".
+Selectionner "Utiliser une base de donnees externe" dans la liste et remplir les champs.
+
+-- Creation de themes --
+Observez le modele standard_M4X pour creer vos themes.
+Par defaut, le theme standard de Moodle est utilise.
+Vous pouvez configurer Moodle pour qu'il utilise le theme standard_M4X pour une meilleure integration.
+
+Si vous trouvez un probleme, merci de m'en avertir le plus rapidement possible en m'envoyant un descriptif detaille du probleme a l'adresse www.moodle4xoops.euro.tm.
+
+
+#####################################################
+#  English
+#####################################################
+#  Moodle4Xoops
+#  Adaptation of Moodle : Jerome BAUDIN
+#  j.baudin@moodle4xoops.euro.tm - http://www.moodle4xoops.euro.tm
+#  Tested on Xoops 2.0.7.3
+#  Should function on Xoops 2.0.X.X
+#
+#  Demonstrastion site : http://www.moodle4xoops.euro.tm
+#
+#  Moodle is a Learning Management Systems created by Martin Dougiamas
+#  http://moodle.org
+#  Licence : GNU
+#  
+#  License for Moodle
+#  The name Moodle is a registered trademark of The Moodle Trust.
+#  You have permission to use this name for any activity related to the
+#  Moodle software described below.
+#  
+#  Moodle software is Copyright © 1999-2004, Martin Dougiamas.
+#  
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License, or
+#  (at your option) any later version.
+#  
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+#  GNU General Public License for more details (attached below).
+#####################################################
+
+1 - Installation
+-----------------------------
+Uncompress the file of installation of Moodle4Xoops in the directory /modules of Xoops.
+Uncompress the file of installation of Moodle in the directory /modules/M4X of Xoops.
+Copy all the files /modules/M4X/moodle_M4X in the directory /modules/M4X/moodle to patch Moodle.
+The directory /modules/M4X/moodle contains all the Moodle system modified to function with Xoops.
+
+The files of Moodle4Xoops are installed
+
+Moodle4Xoops keep the Xoops configuration for database access.
+At the time of the installation, Moodle4Xoops recovers the parameters of Xoops for connection to the database.
+You can use other parameters.
+
+2 - Installation in Xoops
+-------------------------
+- Install the module in " Control Panel Home/System Admin/Modules"
+- Click on the icon of Moodle in the "Control panel" of Xoops, click on "Installation" and follow the instructions.
+By default, Moodle4Xoops will open in another windows to continue its installation.
+You can configure Moodle4Xoops so that it is integrated in Xoops by configuring preferences in the Control panel of Xoops / Moodle4Xoops / Preferences
+
+3 - Installation of Moodle
+--------------------------
+
+---- CAUTION ----
+Moodle requires the login which will have the rights of configuration and management.
+Use same the login and password use for Xoops.
+ex : webmaster, root, admin, ...
+-------------------
+
+-- Auto Login --
+On the screen of configuration "Technical Parameters", configure ' forcelogin' has Yes.
+This option will already activate the auto login of a user connects under Xoops.
+You can leave 'forcelogin' has No, if you want to leave the choice to the user connected to connect itself or not to Moodle.
+Moreover, that makes it possible to leave the access to Moodle to anonymous visitors.
+
+-- Parameters of Xoops connection in Moodle --
+Go in the part Admin de Moodle, then in "User > Authentification".
+Select "To use an external data base" in the list and fill the fields.
+
+-- Creation of theme --
+Observe the standard_M4X model to create your theme.
+By default, the standard model of Moodle is used.
+You can configure Moodle so that it uses the model standard_M4X for a better integration.
+
+If you find a problem, thank you to inform me as soon as possible by sending a description of the problem : www.moodle4xoops.euro.tm.
+
+
